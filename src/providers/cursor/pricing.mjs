@@ -4,7 +4,7 @@
 // actual charged cost, so these rates × (sometimes estimated) token counts are
 // an approximation — records built from estimates carry cost.estimated: true.
 //
-// No cache-write tier; cached input reads priced at ~10% of input.
+// The transcript parser reports input, output and cache reads, but no cache writes.
 import { isGlm, knownContextMax as zaiContextMax } from "../../lib/vendors/zai/pricing.mjs";
 import { M, zeroCost } from "../../lib/pricing-core.mjs";
 import { readCachedRates } from "./remote-pricing.mjs";
@@ -35,16 +35,25 @@ const FALLBACK = { ...model(1.25, 0.125, 6, 200_000), estimated: true };
 // Rates fetched from cursor.com's pricing docs (see remote-pricing.mjs),
 // applied at import from the on-disk cache the viewer refreshes.
 let OVERRIDES = {};
+const price = (n) => typeof n === "number" && Number.isFinite(n) && n >= 0;
+const GUESSED = new Set();
+const MODEL_ID = /^[a-z0-9][a-z0-9._-]*$/;
+export function guessedModels() { return [...GUESSED]; }
+export function clearGuessedModels() { GUESSED.clear(); }
+export function pricedModel(modelId) {
+  const r = modelInfo(modelId);
+  return !r.estimated && !r.cachedGuessed;
+}
 
 /** Merge fetched { id: { input, cachedInput, output } } over TABLE. */
 export function applyRemoteRates(rates) {
   if (!rates) return;
   for (const [id, r] of Object.entries(rates)) {
-    if (!r || !(r.input >= 0) || !(r.output >= 0)) continue;
-    const cachedKnown = r.cachedInput >= 0 && !r.cachedGuessed;
+    if (!r || !price(r.input) || !price(r.output)) continue;
+    const cachedKnown = price(r.cachedInput) && !r.cachedGuessed;
     const cached = cachedKnown ? r.cachedInput : r.input * 0.1;
     const ctx = (TABLE[id] && TABLE[id].contextMax) || FALLBACK.contextMax;
-    OVERRIDES[id] = { ...model(r.input, cached, r.output, ctx), cachedGuessed: !cachedKnown };
+    OVERRIDES[id] = { ...model(r.input, cached, r.output, ctx), cachedGuessed: !cachedKnown, cacheWrite: r.cacheWrite ?? null };
   }
 }
 
@@ -84,7 +93,11 @@ export function costOf(modelId, tokens) {
   const input = (Math.max(0, tokens.input || 0) * r.input) / M;
   const cacheRead = (Math.max(0, tokens.cached || 0) * r.cachedInput) / M;
   const output = (Math.max(0, tokens.output || 0) * r.output) / M;
-  const guessedRate = !!r.estimated || (!!r.cachedGuessed && cacheRead > 0);
+  const guessedRate = !!r.estimated || (!!r.cachedGuessed && (tokens.cached || 0) > 0);
+  if (guessedRate && [tokens.input, tokens.cached, tokens.output].some((n) => n > 0)) {
+    const id = normalize(String(modelId || "").trim().toLowerCase());
+    if (MODEL_ID.test(id) && id !== "unknown") GUESSED.add(id);
+  }
   return {
     input,
     output,

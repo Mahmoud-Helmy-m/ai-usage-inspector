@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildTurns as buildCursorTurns } from "./transcript.mjs";
+export { pricedModel, guessedModels, clearGuessedModels } from "./pricing.mjs";
 import { applyRemoteRates } from "./pricing.mjs";
 import { refreshPricing as refreshRemote } from "./remote-pricing.mjs";
 import { nodeSupported } from "../../lib/sqlite.mjs";
@@ -177,8 +178,8 @@ export function uninstall() {
 
 // ---- pricing refresh (cursor.com docs scrape) ----
 
-export async function refreshPricing() {
-  const r = await refreshRemote();
+export async function refreshPricing(options = {}) {
+  const r = await refreshRemote(options);
   if (r && r.rates) applyRemoteRates(r.rates);
   return r;
 }

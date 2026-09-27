@@ -39,7 +39,10 @@ function readJsonl(file, bytes = Infinity) {
 // storeTurns follows). The head of the file is enough almost always.
 function homeOf(transcriptPath) {
   for (const bytes of [HEAD_BYTES, Infinity]) {
-    for (const e of readJsonl(transcriptPath, bytes)) if (e && typeof e.cwd === "string" && e.cwd) return e.cwd;
+    for (const e of readJsonl(transcriptPath, bytes)) {
+      const cwd = e?.cwd || e?.payload?.cwd;
+      if (typeof cwd === "string" && cwd) return cwd;
+    }
   }
   return null;
 }

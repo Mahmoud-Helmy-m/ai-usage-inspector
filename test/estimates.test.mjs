@@ -159,6 +159,7 @@ function fakeClaude({ guessed = [], priced = () => false, status = "fresh" } = {
     calls,
     provider: {
       id: "claude",
+      transcriptId: (file) => file,
       guessedModels: () => guessed,
       clearGuessedModels: () => { calls.cleared++; },
       pricedModel: priced,
@@ -174,19 +175,19 @@ test("the worker refreshes rates on its own, within the hour when a turn had to 
   const correct = async () => { corrected++; return { rows: 0 }; };
 
   let f = fakeClaude();
-  await refreshRatesAndCorrect({ claude: f.provider, refreshZai, correct });
+  await refreshRatesAndCorrect({ providers: [f.provider], refreshZai, correct });
   assert.equal(f.calls.refresh[0].ttlMs, 12 * 3600e3, "twelve-hourly when nothing was guessed");
   assert.equal(zai[0].ttlMs, 12 * 3600e3);
   assert.equal(corrected, 0, "nothing learned, nothing to correct");
 
   f = fakeClaude({ guessed: ["claude-opus-5-5"] });
-  await refreshRatesAndCorrect({ claude: f.provider, refreshZai, correct });
+  await refreshRatesAndCorrect({ providers: [f.provider], refreshZai, correct });
   assert.equal(f.calls.refresh[0].ttlMs, 3600e3, "an Anthropic guess refreshes Anthropic's rates within the hour");
   assert.equal(zai[1].ttlMs, 12 * 3600e3, "and leaves z.ai on its usual schedule");
   assert.equal(f.calls.cleared, 1, "guesses are forgotten once handled");
 
   f = fakeClaude({ guessed: ["glm-9"] });
-  await refreshRatesAndCorrect({ claude: f.provider, refreshZai, correct });
+  await refreshRatesAndCorrect({ providers: [f.provider], refreshZai, correct });
   assert.equal(zai[2].ttlMs, 3600e3, "a GLM guess refreshes z.ai's rates within the hour");
   assert.equal(f.calls.refresh[0].ttlMs, 12 * 3600e3);
 });
@@ -195,14 +196,14 @@ test("the worker prices stored estimates when rates were learned, or when a gues
   const refreshZai = async () => ({ status: "fresh" });
   let corrected = 0;
   const correct = async () => { corrected++; return { rows: 1 }; };
-  await refreshRatesAndCorrect({ claude: fakeClaude({ status: "updated" }).provider, refreshZai, correct });
+  await refreshRatesAndCorrect({ providers: [fakeClaude({ status: "updated" }).provider], refreshZai, correct });
   assert.equal(corrected, 1, "new rates arrived");
-  await refreshRatesAndCorrect({ claude: fakeClaude({ guessed: ["m"], priced: () => true }).provider, refreshZai, correct });
+  await refreshRatesAndCorrect({ providers: [fakeClaude({ guessed: ["m"], priced: () => true }).provider], refreshZai, correct });
   assert.equal(corrected, 2, "another process already learned the rate");
-  await refreshRatesAndCorrect({ claude: fakeClaude({ guessed: ["m"], priced: () => false }).provider, refreshZai, correct });
+  await refreshRatesAndCorrect({ providers: [fakeClaude({ guessed: ["m"], priced: () => false }).provider], refreshZai, correct });
   assert.equal(corrected, 2, "still unknown: nothing to re-read");
   const failing = fakeClaude({ status: "updated" });
   failing.provider.refreshPricing = async () => { throw new Error("offline"); };
-  await refreshRatesAndCorrect({ claude: failing.provider, refreshZai: async () => { throw new Error("offline"); }, correct });
+  await refreshRatesAndCorrect({ providers: [failing.provider], refreshZai: async () => { throw new Error("offline"); }, correct });
   assert.equal(corrected, 2, "a failed refresh learns nothing and throws nothing");
 });

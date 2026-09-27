@@ -419,34 +419,43 @@ const RATES_TTL_MS = 12 * HOUR_MS;
  * Everything is injectable for tests; nothing here may throw.
  */
 export async function refreshRatesAndCorrect({
-  claude = getProvider("claude"),
+  providers = detectInstalled(),
+  refreshers = {},
   refreshZai = refreshZaiPricing,
   correct = correctEstimatedCosts,
   timeoutMs = 5_000,
 } = {}) {
-  const result = { guessed: [], refreshed: [], corrected: null };
-  if (!claude) return result;
-  const guessed = typeof claude.guessedModels === "function" ? claude.guessedModels() : [];
-  result.guessed = guessed;
-  const guessedGlm = guessed.some((m) => /^glm-/.test(m));
+  const result = { guessed: [], refreshed: [], corrected: {} };
+  const guesses = new Map();
+  for (const provider of providers.filter(Boolean)) {
+    try { guesses.set(provider, provider.guessedModels?.() || []); } catch { guesses.set(provider, []); }
+  }
+  result.guessed = [...guesses.values()].flat();
+  const guessedGlm = result.guessed.some((m) => /^glm-/i.test(m));
   let learned = false;
-  for (const [name, refresh, ttlMs] of [
-    ["claude", (o) => claude.refreshPricing(o), guessed.some((m) => !/^glm-/.test(m)) ? HOUR_MS : RATES_TTL_MS],
-    ["zai", refreshZai, guessedGlm ? HOUR_MS : RATES_TTL_MS],
-  ]) {
+  const refresh = async (name, fn, guessed) => {
     try {
-      const r = await refresh({ timeoutMs, ttlMs });
-      if (r && r.status) result.refreshed.push(`${name}:${r.status}`);
-      if (r && r.status === "updated") learned = true;
+      const r = await fn({ timeoutMs, ttlMs: guessed ? HOUR_MS : RATES_TTL_MS });
+      if (r?.status) result.refreshed.push(`${name}:${r.status}`);
+      if (r?.status === "updated") learned = true;
     } catch {}
+  };
+  for (const [provider, guessed] of guesses) {
+    if (!["claude", "codex", "cursor"].includes(provider.id)) continue;
+    await refresh(provider.id, refreshers[provider.id] || ((o) => provider.refreshPricing(o)),
+      guessed.some((m) => provider.id !== "claude" || !/^glm-/i.test(m)));
   }
-  // A guess made this run may be priceable without any fetch: another process may already
-  // have learned the rate. Either way the correction only re-reads rows it can now price.
-  const nowPriced = typeof claude.pricedModel === "function" && guessed.some((m) => claude.pricedModel(m));
-  if (learned || nowPriced) {
-    try { result.corrected = await correct(claude); } catch {}
+  if (guesses.size) await refresh("zai", refreshers.zai || refreshZai, guessedGlm);
+  for (const [provider, guessed] of guesses) {
+    try {
+      if (typeof provider.pricedModel === "function"
+          && (learned || guessed.some((m) => provider.pricedModel(m)))) {
+        // Cursor's SQLite references have no transcriptId; correction needs file-backed rows.
+        if (typeof provider.transcriptId === "function") result.corrected[provider.id] = await correct(provider);
+      }
+    } catch {}
+    try { provider.clearGuessedModels?.(); } catch {}
   }
-  if (typeof claude.clearGuessedModels === "function") claude.clearGuessedModels();
   return result;
 }
 

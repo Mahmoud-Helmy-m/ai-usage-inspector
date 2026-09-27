@@ -540,8 +540,8 @@ function autoSync() {
 }
 
 // Refresh the shared pricing caches — Claude rates from Anthropic's public
-// docs, OpenAI rates from models.dev. No pricing API or version stamp to diff
-// against, so we re-fetch on every viewer start (a manual, occasional launch)
+// docs, OpenAI Standard rates from its docs (models.dev fills missing ids).
+// We re-fetch on every viewer start (a manual, occasional launch)
 // and content-diff the result — a cache and its log line only move when a rate
 // actually changed. Skipped when this project isn't tracking cost.
 // Non-blocking, best-effort, offline-safe.

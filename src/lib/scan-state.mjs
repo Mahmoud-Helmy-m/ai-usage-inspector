@@ -21,11 +21,12 @@ export const SCAN_STATUSES = new Set(["ok", "locked", "unsupported-schema", "mis
 // window, unlinked subagent sessions — are re-read (2.9.1).
 // 5: OpenCode request counts/windows and Cline-family unknown windows (2.9.2).
 // 6: z.ai vendor, GLM rates and known/unknown windows (2.10.0).
-export const REPAIR_EPOCH = 6;
+// 7: Codex official Standard rates and per-request long-context pricing (2.11.0).
+export const REPAIR_EPOCH = 7;
 
 // Which agents' stored rows each epoch's changes touch. Epochs before this map
 // existed touched every provider, so a missing entry repairs them all.
-const REPAIR_PROVIDERS_BY_EPOCH = Object.freeze({ 4: ["opencode"], 5: ["opencode", "cline", "roo", "kilo"], 6: ["claude", "opencode", "cline", "roo", "kilo", "cursor"] });
+const REPAIR_PROVIDERS_BY_EPOCH = Object.freeze({ 4: ["opencode"], 5: ["opencode", "cline", "roo", "kilo"], 6: ["claude", "opencode", "cline", "roo", "kilo", "cursor"], 7: ["codex"] });
 
 // A repair covers the rows one destination holds: each project's own files, or
 // the pooled copy in an aggregate AI_USAGE_DIR. Settling one says nothing about

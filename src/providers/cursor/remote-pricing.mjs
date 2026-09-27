@@ -1,14 +1,6 @@
-// Dynamic Cursor model pricing, scraped from cursor.com's public docs — which
-// serve raw markdown at the .md suffix. Table shape (verified 2026-07):
-//   | Model | Provider | $<input> | $<output> |
-// Bare dollar cells, no per-MTok suffix. The page now publishes a cache-read
-// column; where it does not, cachedInput falls back to 10% of input and is
-// flagged. Same architecture as the other providers' refreshers: the viewer
-// refreshes the on-disk cache (content-diffed); the hook/sync path reads the
-// cache synchronously and never touches the network.
-//
-// IMPORTANT: keep this file SELF-CONTAINED (node builtins only) — install.mjs
-// copies it next to the bundled viewer as viewer/remote-pricing-cursor.mjs.
+// Cursor's official markdown prices, including cache reads and writes.
+// Missing read prices use a flagged 10% guess. Hooks read the cache offline;
+// worker, install, sync and viewer refresh it. Self-contained for the bundled viewer.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,7 +16,7 @@ export const CACHE_FILE = path.join(
 // Table layout (verified 2026-07):
 //   | Model | Provider | Input | Cache write | Cache read | Output | Notes |
 // The Model cell is a markdown link `[Name](url)`; prices are bare `$N`.
-const COL = { model: 1, input: 3, cacheRead: 5, output: 6 };
+const COL = { model: 1, input: 3, cacheWrite: 4, cacheRead: 5, output: 6 };
 
 // "[Claude 4.6 Sonnet](url)" -> "claude-4.6-sonnet". Link + parens stripped.
 function nameToId(cell) {
@@ -57,7 +49,7 @@ export function parsePricingMarkdown(md) {
     const cr = parsePrice(cells[COL.cacheRead]);
     // cr == null means the page published no cache rate; the 10% below is our
     // guess, flagged so costs derived from it are labelled estimated.
-    rates[id] = { input, cachedInput: cr != null ? cr : input * 0.1, output, cachedGuessed: cr == null };
+    rates[id] = { input, cachedInput: cr != null ? cr : input * 0.1, output, cacheWrite: parsePrice(cells[COL.cacheWrite]), cachedGuessed: cr == null };
   }
   return rates;
 }
@@ -105,62 +97,46 @@ export function diffRates(oldRates, nextRates) {
     const y = b[id];
     if (!y) changes.push({ id, type: "removed", from: x });
     else if (!x) changes.push({ id, type: "added", to: y });
-    else if (x.input !== y.input || x.output !== y.output)
+    else if (["input", "output", "cachedInput", "cacheWrite", "cachedGuessed"].some((k) => x[k] !== y[k]))
       changes.push({ id, type: "changed", from: x, to: y });
   }
   return changes;
 }
 
-/**
- * Refresh the on-disk Cursor pricing cache. Best-effort; every failure path
- * falls back to cached (or null) rates. Returns { status, rates, changes? } —
- * status: no-fetch | fresh | unchanged | updated | offline | http-<code> |
- * read-error | parse-thin.
- */
+/** Best-effort refresh with a twelve-hour ttl and one-hour failure backoff. */
 export async function refreshPricing({
-  file = CACHE_FILE,
-  url = PRICING_URL,
-  ttlMs = 0,
+  file = CACHE_FILE, url = PRICING_URL,
+  ttlMs = 12 * 60 * 60 * 1000, retryMs = 60 * 60 * 1000, timeoutMs = 10_000,
   now = Date.now(),
-  // AI_USAGE_NO_PRICING_REFRESH=1 keeps every refresher off the network.
   fetchImpl = process.env.AI_USAGE_NO_PRICING_REFRESH === "1" ? null : globalThis.fetch,
 } = {}) {
-  if (typeof fetchImpl !== "function") {
-    return { status: "no-fetch", rates: readCachedRates(file) };
-  }
   const cached = readCache(file);
-  if (cached && cached.fetchedAt && ttlMs > 0 && now - cached.fetchedAt < ttlMs) {
-    return { status: "fresh", rates: cached.rates || null };
-  }
-
+  const result = (status) => ({ status, rates: cached?.rates || null });
+  if (typeof fetchImpl !== "function") return result("no-fetch");
+  if (ttlMs > 0 && cached?.fetchedAt && now - cached.fetchedAt < ttlMs) return result("fresh");
+  if (ttlMs > 0 && cached?.attemptedAt && now - cached.attemptedAt < Math.min(retryMs, ttlMs)) return result("backoff");
+  const keep = (status) => {
+    writeCache(file, { ...(cached || {}), schema: CACHE_SCHEMA, attemptedAt: now });
+    return result(status);
+  };
+  // Some Accept values listing text/markdown got a 404 from cursor.com (2026-09); keep text/plain.
+  const headers = { accept: "text/plain, */*" };
+  if (cached?.etag) headers["if-none-match"] = cached.etag;
   let res;
-  try {
-    res = await fetchImpl(url, { headers: { accept: "text/plain, */*" } });
-  } catch {
-    return { status: "offline", rates: cached ? cached.rates : null };
+  try { res = await fetchImpl(url, { headers, signal: AbortSignal.timeout(timeoutMs) }); }
+  catch { return keep("offline"); }
+  if (res.status === 304 && cached?.rates) {
+    writeCache(file, { ...cached, fetchedAt: now, attemptedAt: now });
+    return result("not-modified");
   }
-  if (!res.ok) {
-    return { status: `http-${res.status}`, rates: cached ? cached.rates : null };
-  }
-
+  if (!res.ok) return keep(`http-${res.status}`);
   let md;
-  try {
-    md = await res.text();
-  } catch {
-    return { status: "read-error", rates: cached ? cached.rates : null };
-  }
-
+  try { md = await res.text(); } catch { return keep("read-error"); }
   const rates = parsePricingMarkdown(md);
-  // Guard against a docs redesign (or an HTML response) zeroing prices.
-  if (Object.keys(rates).length < 3) {
-    return { status: "parse-thin", rates: cached ? cached.rates : null };
-  }
-
-  const changes = diffRates(cached && cached.rates, rates);
-  if (cached && changes.length === 0) {
-    writeCache(file, { ...cached, schema: CACHE_SCHEMA, fetchedAt: now, rates });
-    return { status: "unchanged", rates };
-  }
-  writeCache(file, { schema: CACHE_SCHEMA, fetchedAt: now, source: url, rates });
-  return { status: "updated", rates, changes };
+  if (Object.keys(rates).length < 3) return keep("parse-thin");
+  const sources = { cursor: url };
+  const changes = diffRates(cached?.rates, rates);
+  const etag = res.headers?.get("etag") || cached?.etag || null;
+  writeCache(file, { schema: CACHE_SCHEMA, fetchedAt: now, attemptedAt: now, etag, sources, rates });
+  return { status: cached && !changes.length ? "unchanged" : "updated", rates, changes };
 }

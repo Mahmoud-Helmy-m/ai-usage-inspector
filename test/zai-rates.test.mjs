@@ -259,14 +259,14 @@ test("zai: revision and supersedes repair stale GLM exactly once", async (t) => 
   await upsertSession(file, "s", [{ ...fresh, cost: { ...fresh.cost, total: 2 } }]);
   assert.equal(read().cost.total, 1.26);
 });
-test("zai: epoch 6 repairs only agents that carry GLM rows", async (t) => {
+test("zai: upgrade through epoch 6 repairs GLM agents and epoch 7 adds Codex", async (t) => {
   const file = path.join(temp(t), "scan.json");
   const affected = ["claude", "cursor", "opencode", "cline", "roo", "kilo"];
   fs.writeFileSync(file, JSON.stringify({ installedRepairEpoch: 5, providers: {} }));
-  assert.equal(REPAIR_EPOCH, 6);
+  assert.equal(REPAIR_EPOCH, 7);
   await recordInstall({ file, upgrading: true, providerIds: [...affected, "codex", "future"] });
-  for (const id of affected) assert.equal(repairDue(id, { file }), 6, id);
-  for (const id of ["codex", "future"]) assert.equal(repairDue(id, { file }), null, id);
+  for (const id of [...affected, "codex"]) assert.equal(repairDue(id, { file }), REPAIR_EPOCH, id);
+  for (const id of ["future"]) assert.equal(repairDue(id, { file }), null, id);
 });
 test("zai: interactive refresh wiring and standalone viewer include the vendor", async (t) => {
   assert.ok(VIEWER_SIDECARS.some(([from, to]) => from === "lib/vendors/zai/remote-pricing.mjs" && to === "remote-pricing-zai.mjs"));

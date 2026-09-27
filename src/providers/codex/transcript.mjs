@@ -16,7 +16,8 @@ import { vendorOf } from "../../lib/vendors/index.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { HOME } from "../../lib/paths.mjs";
-import { costOf, contextMax } from "./pricing.mjs";
+import { addCost, zeroCost } from "../../lib/pricing-core.mjs";
+import { costOf, contextMax, modelInfo } from "./pricing.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -282,6 +283,7 @@ export function buildTurns(rolloutPath, opts = {}) {
       skillSet: explicitSkills(userText(c), catalog),
       spawnedAgents: new Set(),
       startTotal: { ...runningTotal },
+      requests: [],
       lastCtxInput: 0,
       ctxWindow: 0,
       apiCalls: 0,
@@ -331,8 +333,13 @@ export function buildTurns(rolloutPath, opts = {}) {
       if (!cur.firstAsstTs) cur.firstAsstTs = c.ts;
     } else if (isTokenCount(c)) {
       const info = c.body.info || c.body;
+      const before = runningTotal;
       if (info.total_token_usage) runningTotal = usageVec(info.total_token_usage);
       const last = usageVec(info.last_token_usage || info.total_token_usage);
+      if (info.last_token_usage && (!info.total_token_usage
+          || ["input", "cached", "output"].some((k) => runningTotal[k] > before[k]))) {
+        cur.requests.push({ ...last, model: currentModel });
+      }
       // Context occupancy = the prompt size of the most recent request this turn.
       cur.lastCtxInput = last.input || cur.lastCtxInput;
       cur.ctxWindow = info.model_context_window || cur.ctxWindow;
@@ -383,7 +390,18 @@ function finalizeTurn(t, ctx) {
     webSearch: 0,
     webFetch: 0,
   };
-  const cost = costOf(model, { input: tokens.input, cached: d.cached, output: d.output });
+  const remaining = { input: tokens.input, cached: d.cached, output: d.output };
+  let cost = { ...zeroCost(), source: "priced" };
+  for (const request of t.requests) {
+    const counts = { input: Math.max(0, request.input - request.cached), cached: request.cached, output: request.output };
+    // Incomplete or inconsistent request events must never exceed cumulative deltas.
+    // Keep complete requests that fit, then price the unaccounted remainder short.
+    if (Object.keys(counts).some((k) => counts[k] < 0 || counts[k] > remaining[k])) continue;
+    const tier = modelInfo(request.model).long;
+    cost = addCost(cost, costOf(request.model, counts, { long: !!tier && request.input > tier.threshold }));
+    for (const k of Object.keys(counts)) remaining[k] -= counts[k];
+  }
+  if (Object.values(remaining).some((n) => n > 0)) cost = addCost(cost, costOf(model, remaining));
 
   const ctxTokens = t.lastCtxInput || d.input;
   const ctxMax = t.ctxWindow || contextMax(model);

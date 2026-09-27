@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { HOME } from "../../lib/paths.mjs";
 import { buildTurns as buildCodexTurns, parseRolloutName } from "./transcript.mjs";
+export { pricedModel, guessedModels, clearGuessedModels } from "./pricing.mjs";
 import { applyRemoteRates } from "./pricing.mjs";
 import { refreshPricing as refreshRemote } from "./remote-pricing.mjs";
 
@@ -217,10 +218,10 @@ export function uninstall() {
   return { file: HOOKS_FILE, removed: removed + migrated };
 }
 
-// Dynamic OpenAI pricing via models.dev (open JSON dataset); built-in table
+// Official OpenAI pricing, supplemented by models.dev for missing ids; built-in table
 // is the fallback. See remote-pricing.mjs.
-export async function refreshPricing() {
-  const r = await refreshRemote();
+export async function refreshPricing(options = {}) {
+  const r = await refreshRemote(options);
   if (r && r.rates) applyRemoteRates(r.rates);
   return r;
 }

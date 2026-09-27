@@ -494,7 +494,7 @@ column; no vendor chart or new provider is introduced.
 `src/lib/vendors/zai/pricing.mjs` is shared by all agents. Its 20 bundled model entries mirror
 Claude's `input`, `output`, `cacheRead`, `cacheWrite5m`, `cacheWrite1h`, `contextMax` and
 `windowKnown` vocabulary. Prices are USD per million tokens from
-[z.ai's pricing page](https://docs.z.ai/guides/overview/pricing), read as the markdown the docs
+[z.ai's pricing page](https://docs.z.ai/guides/overview/pricing.md), read as the markdown the docs
 site serves at that path plus `.md` (the page itself answers with HTML, which parses to nothing). GLM 5.3, Flash and FlashX have
 1,000,000-token windows; GLM 5.1, 5, 4.7, 4.7 Flash/FlashX and 4.6 have 200,000;
 GLM 4 32B 0414 128K has 128,000. All other bundled windows are unknown. The page does not
@@ -533,13 +533,13 @@ them:
 
 | Provider / vendor | Source | Cache |
 |---|---|---|
-| Claude | Anthropic's public [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) | `~/.ai-usage-inspector/pricing-claude.json` |
-| z.ai | [Published pricing](https://docs.z.ai/guides/overview/pricing) | `~/.ai-usage-inspector/pricing-zai.json` |
-| OpenAI | [models.dev](https://models.dev) (OpenAI publishes no machine-readable pricing) | `~/.ai-usage-inspector/pricing-codex.json` |
-| Cursor | Cursor's [models & pricing](https://cursor.com/docs/models-and-pricing) docs | `~/.ai-usage-inspector/pricing-cursor.json` |
+| Claude | Anthropic's [pricing](https://platform.claude.com/docs/en/about-claude/pricing.md) and [models](https://platform.claude.com/docs/en/about-claude/models/overview.md) pages | `~/.ai-usage-inspector/pricing-claude.json` |
+| z.ai | [Published pricing](https://docs.z.ai/guides/overview/pricing.md) | `~/.ai-usage-inspector/pricing-zai.json` |
+| OpenAI | [Official Standard pricing](https://developers.openai.com/api/docs/pricing.md); [models.dev](https://models.dev/api.json) only for missing ids | `~/.ai-usage-inspector/pricing-codex.json` |
+| Cursor | Cursor's [models & pricing](https://cursor.com/docs/models-and-pricing.md) docs | `~/.ai-usage-inspector/pricing-cursor.json` |
 | OpenCode | none needed — it stores its own cost per message | — |
 
-There is no pricing API or version to check, so it re-fetches every run and
+The dashboard requests a refresh with ttl 0 at every start and
 **content-diffs** the result: a cache and its startup log line only move when a rate
 actually changed, and it prints exactly which models moved. Offline, or when cost is not
 tracked, the built-in tables are used and no fetch happens.
@@ -556,13 +556,28 @@ window" rows by column. A model released after this version is priced and measur
 the first time the cache refreshes. The models page failing never holds back a rate refresh, and
 the windows already known are kept.
 
-`install` and `sync` refresh the Claude and z.ai caches too, when it is more than 12 hours old, with a
-5-second bound per page, and wait an hour after a failed attempt before trying again (the
-dashboard, which asks with a ttl of 0, is never held back). Windows that arrive while the pricing
-page fails are kept even when no rates are cached yet: a machine that only ever runs the hook never starts the dashboard, and
-would otherwise price every new model on a guess for good. Codex and Cursor refresh only from the
-dashboard, because their refreshers take no timeout. `AI_USAGE_NO_PRICING_REFRESH=1` keeps every
-command off the network; the test suite runs with it.
+`install`, `sync` and the background worker refresh Claude, Codex, Cursor and z.ai with a
+12-hour ttl and a 5-second timeout per request. A worker that guessed a model shortens that
+provider's ttl to one hour; a GLM guess from any provider shortens z.ai's ttl. Failed attempts
+back off for one hour (capped by the ttl, so dashboard starts still try). ETags allow 304 replies.
+`AI_USAGE_NO_PRICING_REFRESH=1` disables all pricing requests; tests inject fetch implementations.
+Only public documentation is requested: no prompts, tokens or costs are sent.
+
+Codex parses only `### Standard pricing data` from OpenAI's markdown: Batch, Flex and Fast
+prices are ignored. Short and long input, cached input, cache-write and output prices are kept.
+A cached-input dash means input price with no discount; a cache-write dash means not applicable.
+Long tiers use the row's `<NK` threshold, otherwise OpenAI's documented 272,000 tokens. Each
+request whose input (including cached tokens) exceeds that threshold uses the long tier.
+Turn token totals still come from cumulative deltas. Complete request events that fit the delta
+are priced individually; unaccounted tokens use short rates. Duplicate cumulative events are
+ignored for costing. Rollouts provide no cache-write counts, so that cost stays zero.
+After a successful official parse, models.dev fills only missing ids; each cached model records
+`source: "openai"` or `"models.dev"`. Official failure preserves the cache; secondary failure
+still permits official prices. Fewer than three official models is `parse-thin`.
+
+Cursor keeps its `Accept: text/plain, */*` header: some Accept values that list `text/markdown` got
+404 responses in testing (2026-09). It stores the published cache-write column, but its transcript parser reads only
+input, output and cache reads, so cache-write cost remains zero.
 
 The z.ai refresher lives in `src/lib/vendors/zai/remote-pricing.mjs`, separate from providers.
 It fetches one page and parses the canonical `Model | Input | Cached Input | Cached Input Storage | Output`
@@ -765,7 +780,7 @@ Values worth knowing before they surprise you. All are constants in the source, 
 |---|---|
 | `sync --days N` | filters on transcript modification time, then imports each qualifying session whole — it does not filter individual turns |
 | dashboard start | spawns a detached `sync --days 7`, only when the globally installed app exists. Disable with `--no-sync` |
-| pricing refresh | on dashboard start, over the network (disable with `--no-pricing-refresh`); Claude and z.ai also on `install` and `sync` when the cache is over 12 hours old, 5 s per page. `AI_USAGE_NO_PRICING_REFRESH=1` disables all of it. The hook and sweep paths never fetch |
+| pricing refresh | on dashboard start, over the network (disable with `--no-pricing-refresh`); Claude, Codex, Cursor and z.ai also on `install`, `sync` and worker runs when the cache is over 12 hours old, 5 s per page. `AI_USAGE_NO_PRICING_REFRESH=1` disables all of it. The hook never fetches; the worker refreshes after sweeping, with a 1-hour ttl after a guess |
 | first import of old history | priced at today's rates, since no rate is recorded in the transcript |
 
 **Aggregate mode** (`install.mjs --dashboard`)
@@ -780,13 +795,13 @@ A model released after this machine last fetched rates is priced from a fallback
 `estimated`. Two pieces close that gap without putting the hook online:
 
 - **The worker refreshes rates.** After it drains the spool and sweeps, `refreshRatesAndCorrect`
-  in [`src/worker.mjs`](../src/worker.mjs) runs the Claude and z.ai refreshers with their usual
-  12-hour ttl — or one hour for the vendor whose model a turn in this run had to guess. Claude's
-  pricing module records those guesses (`guessedModels`): only ids that look like a model and only
+  in [`src/worker.mjs`](../src/worker.mjs) runs the Claude, Codex, Cursor and z.ai refreshers with their usual
+  12-hour ttl — or one hour for the vendor whose model a turn in this run had to guess. Claude, Codex and Cursor
+  pricing modules record those guesses (`guessedModels`): only ids that look like a model and only
   turns that used tokens, so `<synthetic>` and `unknown` never trigger a fetch. Each refresher
   keeps its own one-hour backoff after a failure, and `AI_USAGE_NO_PRICING_REFRESH=1` blocks them.
 - **Stored estimates are priced again.** When a refresh learned new rates, or a guess from this
-  run is already priceable, [`src/lib/estimates.mjs`](../src/lib/estimates.mjs) finds the Claude
+  run is already priceable, [`src/lib/estimates.mjs`](../src/lib/estimates.mjs) finds the Claude and Codex
   rows that are `estimated` and whose every guessed part (the turn and any run marked estimated)
   now has a real rate, and re-reads only the transcripts behind them (rows name their transcript).
   Re-reading, not recomputing from a row's totals: a turn or run can mix models, and only the
@@ -799,10 +814,24 @@ differ, runs included. It never moves the other way, and an estimate that landed
 keeps its label, so a process that loaded the rate cache late cannot make a row flicker; `--relabel`
 still clears such a label without changing the amount, and never changes one itself.
 
+Cursor records guesses and refreshes its rates, but automatic correction is skipped: its
+transcript reference is a SQLite `{ composerId, cwd }` object and it has no `transcriptId`
+interface. A later ordinary scan uses the new prices; estimated token counts remain estimates.
+
 Finding the stores reads only the head of each transcript for the folder its first turn names —
 the rule `storeTurns` places rows by — or, pooled, every file in `AI_USAGE_DIR`.
 
 ## Known limits
+
+- **Codex long-context scope.** OpenAI's gpt-5.5 note says prompts above 272K are priced at
+  2x input and 1.5x output for the full session. Here the threshold applies per request as
+  reported in `last_token_usage`, not to the entire session. Missing or inconsistent request
+  usage falls back to short-tier pricing for the unaccounted cumulative remainder.
+- **Codex repair preserves priced amounts.** Epoch 7 requests one full Codex re-read. Existing
+  priced rows with unchanged tokens retain their old amounts under `preserveComputedCost`,
+  including rows now eligible for the long tier; this repair does not override that rule
+  (`sync --reprice` recomputes them at today's rates).
+  Estimated rows can become priced when their recomputed amounts differ.
 
 - **A session spanning sources can span stores.** Home selection is per parsed source, not a
   durable session-wide registry. Codex now prefers `session_meta.cwd` over the hook fallback,

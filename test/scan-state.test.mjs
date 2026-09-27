@@ -164,35 +164,34 @@ test("an upgrade from an install repaired at an earlier epoch asks again", async
   assert.ok(REPAIR_EPOCH >= 2);
 });
 
-// The epoch that rewrites OpenCode rows repairs only OpenCode's history: the
-// agents that settled the previous epoch are asked for nothing new.
-test("an upgrade from epoch 3 accumulates repairs but leaves Codex unaffected", async (t) => {
+// Crossing multiple epochs accumulates each affected provider.
+test("an upgrade from epoch 3 accumulates repairs including Codex", async (t) => {
   const file = tmpState(t);
   fs.writeFileSync(file, JSON.stringify({ schema: 1, providers: {}, installedRepairEpoch: 3 }));
   assert.equal(await recordInstall({ file, upgrading: true, providerIds: ["opencode", "claude", "codex", "cursor"] }), true);
   assert.equal(repairDue("opencode", { file }), REPAIR_EPOCH);
   for (const id of ["claude", "cursor"]) assert.equal(repairDue(id, { file }), REPAIR_EPOCH);
-  assert.equal(repairDue("codex", { file }), null);
+  assert.equal(repairDue("codex", { file }), REPAIR_EPOCH);
 });
 
 
-test("upgrades through epochs 5 and 6 accumulate their provider scopes", async (t) => {
+test("upgrades through epochs 5, 6 and 7 accumulate their provider scopes", async (t) => {
   const ids = ["opencode", "cline", "roo", "kilo", "claude", "codex", "cursor"];
-  assert.equal(REPAIR_EPOCH, 6);
+  assert.equal(REPAIR_EPOCH, 7);
   for (const installed of [2, 3, 4]) {
     const file = tmpState(t);
     fs.writeFileSync(file, JSON.stringify({ schema: 1, installedRepairEpoch: installed, providers: {} }));
     assert.equal(await recordInstall({ file, upgrading: true, providerIds: ids }), true);
-    for (const id of ids) assert.equal(repairDue(id, { file }), installed === 2 || ["opencode", "cline", "roo", "kilo", "claude", "cursor"].includes(id) ? REPAIR_EPOCH : null, `${installed}: ${id}`);
+    for (const id of ids) assert.equal(repairDue(id, { file }), installed === 2 || ["opencode", "cline", "roo", "kilo", "claude", "cursor", "codex"].includes(id) ? REPAIR_EPOCH : null, `${installed}: ${id}`);
   }
 });
 
-test("epoch 6 retains unaffected older debt without requesting absent providers", async (t) => {
+test("epoch 7 retains unaffected older debt without requesting absent providers", async (t) => {
   const file = tmpState(t);
   fs.writeFileSync(file, JSON.stringify({ schema: 1, installedRepairEpoch: 4,
-    providers: { codex: { repairRequested: 3, repaired: { projects: 2 } } } }));
-  await recordInstall({ file, upgrading: true, providerIds: ["codex"] });
-  assert.equal(repairDue("codex", { file }), 3);
+    providers: { future: { repairRequested: 3, repaired: { projects: 2 } } } }));
+  await recordInstall({ file, upgrading: true, providerIds: ["future"] });
+  assert.equal(repairDue("future", { file }), 3);
   assert.equal(repairDue("opencode", { file }), null);
   assert.equal(scanWindow("opencode", { file, now: 2000000000000 }).sinceMs, 2000000000000 - FIRST_SCAN_WINDOW_MS);
 });

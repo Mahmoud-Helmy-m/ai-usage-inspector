@@ -143,22 +143,20 @@ async function noteInstall(upgrading) {
       skip("history  read in full once more on the next sweep, to repair stored rows");
     }
   } catch {}
-  // Current Claude rates and context windows, so a machine that only ever runs
-  // the hook still prices and measures models released after this version. The
-  // hook itself never fetches; it reads what this leaves on disk. Bounded, and
-  // an install never fails over it.
-  try {
-    const r = await getProvider("claude").refreshPricing({ timeoutMs: 5_000 });
-    if (r && ["updated", "unchanged", "not-modified", "fresh"].includes(r.status)) ok("rates    current Claude prices and context windows cached");
-    else if (r) skip(`rates    could not fetch current Claude prices (${r.status}); using the built-in table`);
-  } catch {}
-  // Turns stored with a guessed price — a model newer than the rates this machine had — are
-  // priced again now that real rates may be known. Only those turns, re-read from their
-  // transcripts; a cost already priced from a real rate is never restated.
-  try {
-    const c = await correctEstimatedCosts(getProvider("claude"));
-    if (c.priced) ok(`prices   ${c.priced} estimated turn(s) re-priced at real rates`);
-  } catch {}
+  // Cache current rates for the installed hook, which never fetches itself.
+  for (const id of ["claude", "codex", "cursor"]) {
+    try {
+      const r = await getProvider(id)?.refreshPricing({ timeoutMs: 5_000 });
+      if (r && ["updated", "unchanged", "not-modified", "fresh"].includes(r.status)) ok(`rates    current ${id} prices cached`);
+      else if (r) skip(`rates    could not fetch current ${id} prices (${r.status}); using the built-in table`);
+    } catch {}
+  }
+  let priced = 0;
+  for (const provider of detectInstalled()) {
+    if (typeof provider.pricedModel !== "function" || typeof provider.transcriptId !== "function") continue;
+    try { priced += (await correctEstimatedCosts(provider)).priced; } catch {}
+  }
+  if (priced) ok(`prices   ${priced} estimated turn(s) re-priced at real rates`);
 }
 
 const FIELD_GROUPS = ["text", "tokens", "cost", "context", "timing", "skills", "counts", "meta"];

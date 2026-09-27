@@ -29,7 +29,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 33: Safari trackpad pinch zooms the time charts.
 // 34: session rows show the summed duration of their turns.
 // 35: model vendor filter, prompt detail metadata and CSV column.
-export const VIEWER_VERSION = "35";
+// 36: the Codex price sidecar reads OpenAI's official page into a new cache schema; an older
+//     copy would keep rewriting that cache in the old one.
+export const VIEWER_VERSION = "36";
 
 // A project gets viewer/ and nothing else — no src/ tree beside it — so the
 // modules the bundled dashboard imports are copied in next to it, under the

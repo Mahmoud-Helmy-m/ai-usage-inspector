@@ -120,20 +120,14 @@ async function main() {
     process.exit(1);
   }
 
-  // Current rates and context windows before anything is priced. A machine that
-  // only ever runs the hook never opens the dashboard, which is otherwise the only
-  // thing that fetches them — so a model released after this version shipped
-  // would be priced and measured on a guess for good. Skipped when fetched within
-  // the last 12 hours; bounded, and never fatal. Claude only: the other
-  // providers' refreshers take no timeout and refetch on every call, which a
-  // sync run on every sweep must not wait on.
+  // Refresh before parsing: twelve-hour ttl, bounded requests and failure backoff.
   let ratesLearned = false;
   try {
     const z = await refreshZaiPricing({ timeoutMs: 5_000 });
     if (z && z.status === "updated") ratesLearned = true;
   } catch {}
   for (const p of providers) {
-    if (p.id !== "claude" || typeof p.refreshPricing !== "function") continue;
+    if (!["claude", "codex", "cursor"].includes(p.id) || typeof p.refreshPricing !== "function") continue;
     try {
       const r = await p.refreshPricing({ timeoutMs: 5_000 });
       if (r && r.status === "updated") {
@@ -143,12 +137,14 @@ async function main() {
     } catch {}
   }
   // New rates can price turns stored with a guessed one; re-read just those.
-  const claudeProvider = providers.find((p) => p.id === "claude");
-  if (ratesLearned && claudeProvider && process.env.AI_USAGE_RELABEL !== "1") {
-    try {
-      const c = await correctEstimatedCosts(claudeProvider);
-      if (c.priced) console.log(`  claude: ${c.priced} estimated turn(s) priced at real rates, from ${c.reread} transcript(s)`);
-    } catch {}
+  if (ratesLearned && process.env.AI_USAGE_RELABEL !== "1") {
+    for (const p of providers) {
+      if (typeof p.pricedModel !== "function" || typeof p.transcriptId !== "function") continue;
+      try {
+        const c = await correctEstimatedCosts(p);
+        if (c.priced) console.log(`  ${p.id}: ${c.priced} estimated turn(s) priced at real rates, from ${c.reread} transcript(s)`);
+      } catch {}
+    }
   }
 
   for (const p of providers) {
