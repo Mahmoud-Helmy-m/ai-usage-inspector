@@ -16,6 +16,7 @@
 // widens the window to a provider's whole history, once.
 // Per-project tracking config still gates every project (disabled = skipped),
 // exactly like the hook path.
+import { refreshPricing as refreshZaiPricing } from "./lib/vendors/zai/pricing.mjs";
 import path from "node:path";
 import { getProvider, detectInstalled } from "./providers/index.mjs";
 import { ingestTranscript } from "./lib/ingest.mjs";
@@ -125,6 +126,7 @@ async function main() {
   // the last 12 hours; bounded, and never fatal. Claude only: the other
   // providers' refreshers take no timeout and refetch on every call, which a
   // sync run on every sweep must not wait on.
+  try { await refreshZaiPricing({ timeoutMs: 5_000 }); } catch {}
   for (const p of providers) {
     if (p.id !== "claude" || typeof p.refreshPricing !== "function") continue;
     try {

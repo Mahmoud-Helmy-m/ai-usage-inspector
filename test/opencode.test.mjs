@@ -605,3 +605,25 @@ test("OpenCode cyclic ancestry terminates and long ancestry stops at 64", needsS
   assert.equal(result.status, 0, fs.readFileSync(errFile, "utf8"));
   assert.deepEqual(JSON.parse(fs.readFileSync(outFile, "utf8")), [2, 1, 64]);
 });
+
+
+test("zai: OpenCode preserves cost and prefers catalogue over vendor windows", needsSqlite, async (t) => {
+  const cases = [["GLM-5.3-Flash", "exact", 500000], ["GLM-5.3-Flash", "zai", 1000000], ["glm-5.2", "zai", null], ["glm-unknown", "zai", null]];
+  const dir = makeDb({ sessions: cases.map((_, i) => reviewSession(`glm-${i}`)), messages: cases.flatMap(([model, provider], i) => [
+    reviewMessage(`u${i}`, `glm-${i}`, 0, { role: "user" }),
+    reviewMessage(`a${i}`, `glm-${i}`, 1, asstP(model, 7.25, { input: 10000, output: 100 }, provider)),
+  ]) });
+  const cache = cacheDir({ exact: { models: { "GLM-5.3-Flash": { limit: { context: 500000 } } } } });
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(cache, { recursive: true, force: true }); });
+  await withEnv({ data: dir, cache }, async (m) => {
+    for (const [i, [, , window]] of cases.entries()) {
+      const [row] = await m.buildTurns({ sessionId: `glm-${i}` });
+      assert.equal(row.provider, "opencode");
+      assert.equal(row.vendor, "z.ai");
+      assert.equal(row.cost.total, 7.25);
+      assert.equal(row.cost.source, "provider");
+      assert.equal(row.contextMax, window);
+      assert.equal(row.contextFillPct, window ? Math.round(10000 / window * 1000) / 10 : null);
+    }
+  });
+});

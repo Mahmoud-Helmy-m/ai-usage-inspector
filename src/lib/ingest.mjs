@@ -28,7 +28,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 32: a plain wheel over a chart scrolls the page; Ctrl/⌘ + wheel or a pinch zooms.
 // 33: Safari trackpad pinch zooms the time charts.
 // 34: session rows show the summed duration of their turns.
-export const VIEWER_VERSION = "34";
+// 35: model vendor filter, prompt detail metadata and CSV column.
+export const VIEWER_VERSION = "35";
 
 // A project gets viewer/ and nothing else — no src/ tree beside it — so the
 // modules the bundled dashboard imports are copied in next to it, under the
@@ -38,6 +39,7 @@ export const VIEWER_VERSION = "34";
 export const VIEWER_SIDECARS = [
   ["lib/config.mjs", "config.mjs"],
   ["lib/store.mjs", "store.mjs"],
+  ["lib/vendors/zai/remote-pricing.mjs", "remote-pricing-zai.mjs"],
   ["providers/claude/remote-pricing.mjs", "remote-pricing.mjs"],
   ["providers/codex/remote-pricing.mjs", "remote-pricing-codex.mjs"],
   ["providers/cursor/remote-pricing.mjs", "remote-pricing-cursor.mjs"],

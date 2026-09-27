@@ -20,6 +20,7 @@
 // Copies the app into ~/.ai-usage-inspector/app and points each agent's hook
 // there, so tracking keeps working even if this repo moves. Existing settings
 // are preserved.
+import { refreshPricing as refreshZaiPricing } from "./src/lib/vendors/zai/pricing.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -135,6 +136,7 @@ function copyApp() {
 // An upgrade across a change in how turns are identified or costed owes each agent
 // one full read of its history, so rows stored the old way are rewritten.
 async function noteInstall(upgrading) {
+  try { await refreshZaiPricing({ timeoutMs: 5_000 }); } catch {}
   try {
     if (await recordInstall({ upgrading, providerIds: detectInstalled().map((p) => p.id) })) {
       skip("history  read in full once more on the next sweep, to repair stored rows");

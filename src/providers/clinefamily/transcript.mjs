@@ -21,6 +21,8 @@
 // user messages and SUM every api_req_started in between — one record per user
 // prompt, with counts.apiCalls = number of model calls (matching how the Claude
 // and Codex providers aggregate a turn).
+import { vendorOf } from "../../lib/vendors/index.mjs";
+import { isGlm, knownContextMax as zaiContextMax } from "../../lib/vendors/zai/pricing.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -202,6 +204,7 @@ function finalizeTurn(t, ctx) {
     response: t.response || "",
     responseChars: (t.response || "").length,
     model: ctx.model || null,
+    vendor: vendorOf(ctx.model),
     serviceTier: null,
     speed: null,
     permissionMode: "default",
@@ -220,6 +223,7 @@ function finalizeTurn(t, ctx) {
 // Small context-window lookup by model substring; unknown windows stay null.
 function contextMax(model) {
   const m = String(model || "").toLowerCase();
+  if (isGlm(m)) return zaiContextMax(m);
   if (/gemini|gpt-4\.1|o[0-9]/.test(m)) return 1_000_000;
   if (/claude|sonnet|opus|haiku/.test(m)) return 200_000;
   if (/gpt-4o|gpt-4|gpt-5/.test(m)) return 128_000;

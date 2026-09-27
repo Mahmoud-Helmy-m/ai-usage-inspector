@@ -5,6 +5,7 @@
 // an approximation — records built from estimates carry cost.estimated: true.
 //
 // No cache-write tier; cached input reads priced at ~10% of input.
+import { isGlm, knownContextMax as zaiContextMax } from "../../lib/vendors/zai/pricing.mjs";
 import { M, zeroCost } from "../../lib/pricing-core.mjs";
 import { readCachedRates } from "./remote-pricing.mjs";
 
@@ -68,6 +69,8 @@ export function modelInfo(modelId) {
 }
 
 export function contextMax(modelId) {
+  const id = normalize(modelId);
+  if (isGlm(id) && !TABLE[id]) return zaiContextMax(id);
   return modelInfo(modelId).contextMax;
 }
 

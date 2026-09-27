@@ -9,6 +9,7 @@ their machine. Start with the [README](../README.md) if you just want to use it.
 - [Scan windows](#scan-windows)
 - [What each provider reads](#what-each-provider-reads)
 - [Configuration in depth](#configuration-in-depth)
+- [Model vendors](#model-vendors)
 - [Pricing refresh](#pricing-refresh)
 - [Dashboard API](#dashboard-api)
 - [Project layout](#project-layout)
@@ -136,7 +137,9 @@ leaves it where it was — and the scan status (`ok`, `locked`, `unsupported-sch
 
 An upgrade across a change in how turns are identified or costed records a repair for the
 detected providers affected by any crossed epoch. Missing epoch entries mean every provider;
-epoch 4 targets OpenCode, and epoch 5 targets OpenCode, Cline, Roo Code and Kilo Code.
+epoch 4 targets OpenCode, epoch 5 targets OpenCode, Cline, Roo Code and Kilo Code,
+and epoch 6 targets Claude Code, Cursor, OpenCode, Cline, Roo Code and Kilo Code for GLM repair.
+Codex is unaffected by epoch 6; older crossed epochs still accumulate their own debt.
 Older pending repairs remain owed; a fresh install or a provider first detected after upgrade
 does not acquire a repair just from detection. Until that agent's history has been read in full once, its window
 starts at the beginning. Only a pass that reached every transcript it listed settles the repair —
@@ -479,14 +482,59 @@ Chart invariants are tested in `test/viewer-api.test.mjs`, including a 5,200-tur
 320-day case, shared aggregation, lazy tables, formatting across locales and year
 boundaries, context means/peaks and validated preference persistence.
 
+## Model vendors
+
+A provider is the agent that recorded a turn; a vendor supplies its model. `vendor` is
+`z.ai` for case-insensitive GLM ids (including provider-prefixed ids), `anthropic` for models
+known by the Claude table, `openai` for models known by the Codex table, and otherwise `null`.
+Every parser stamps it. It belongs to `meta`, including on nested runs, so field selection
+strips it. The dashboard exposes a vendor filter next to model, a detail meta line and a CSV
+column; no vendor chart or new provider is introduced.
+
+`src/lib/vendors/zai/pricing.mjs` is shared by all agents. Its 20 bundled model entries mirror
+Claude's `input`, `output`, `cacheRead`, `cacheWrite5m`, `cacheWrite1h`, `contextMax` and
+`windowKnown` vocabulary. Prices are USD per million tokens from
+[z.ai's pricing page](https://docs.z.ai/guides/overview/pricing), read as the markdown the docs
+site serves at that path plus `.md` (the page itself answers with HTML, which parses to nothing). GLM 5.3, Flash and FlashX have
+1,000,000-token windows; GLM 5.1, 5, 4.7, 4.7 Flash/FlashX and 4.6 have 200,000;
+GLM 4 32B 0414 128K has 128,000. All other bundled windows are unknown. The page does not
+publish windows: a refresh never invents or updates them, and unknowns store `contextMax: null`
+and `contextFillPct: null`, including newly fetched models.
+
+Claude's calculator selects the z.ai table for GLM, preserving Anthropic-shaped token
+accounting and marking known rates `priced`. OpenCode and Cline/Roo/Kilo retain reported
+costs; OpenCode prefers its own exact catalogue window before this fallback. Cursor retains
+its own rate calculation and exact/estimated token provenance, using z.ai only for missing
+windows. Thus the agent stays Claude Code, OpenCode, Cursor, Cline, Roo or Kilo.
+
+Unknown GLM ids retain their agent's current cost behavior. In Claude this is the existing
+Opus-tier fallback, explicitly `estimated` with `estimatedRate: true`, never presented as a
+published GLM price, and with null context. The vendor remains z.ai. For GLM 4 32B, the cache-read
+dash means unavailable, not free: if unexpected cache reads occur, they are conservatively
+valued at the input rate and the cost is marked estimated. Its normal input/output costs are
+priced. All published rates are represented in the built-in table.
+
+Cache writes currently cost zero because **Cached Input Storage is Limited-time Free**;
+a later complete pricing row can change both cache-write lifetimes. These are API-equivalent
+costs, not allocation of the flat-rate GLM Coding Plan subscription. Vision model token rates
+are included, but image/video units and vision-specific usage are unmeasured here.
+
+Claude rate revision 3 stamps known GLM costs with `supersedes: 3`, correcting old fallback
+costs once while retaining later historical costs. Repair epoch 6 asks only the six affected
+agents to read history again on upgrade. Existing stored-field and `--relabel` protections
+continue to apply. Unknown GLM windows in orphaned Claude rows are cleared to null/null.
+Repair requires the original transcript for cost reconstruction; deleted
+transcripts cannot be repriced from a turn's aggregate counters when models/runs may differ.
+
 ## Pricing refresh
 
 Per-model rates ship built-in, and when a project tracks cost each viewer start refreshes
 them:
 
-| Provider | Source | Cache |
+| Provider / vendor | Source | Cache |
 |---|---|---|
 | Claude | Anthropic's public [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) | `~/.ai-usage-inspector/pricing-claude.json` |
+| z.ai | [Published pricing](https://docs.z.ai/guides/overview/pricing) | `~/.ai-usage-inspector/pricing-zai.json` |
 | OpenAI | [models.dev](https://models.dev) (OpenAI publishes no machine-readable pricing) | `~/.ai-usage-inspector/pricing-codex.json` |
 | Cursor | Cursor's [models & pricing](https://cursor.com/docs/models-and-pricing) docs | `~/.ai-usage-inspector/pricing-cursor.json` |
 | OpenCode | none needed — it stores its own cost per message | — |
@@ -508,7 +556,7 @@ window" rows by column. A model released after this version is priced and measur
 the first time the cache refreshes. The models page failing never holds back a rate refresh, and
 the windows already known are kept.
 
-`install` and `sync` refresh the Claude cache too, when it is more than 12 hours old, with a
+`install` and `sync` refresh the Claude and z.ai caches too, when it is more than 12 hours old, with a
 5-second bound per page, and wait an hour after a failed attempt before trying again (the
 dashboard, which asks with a ttl of 0, is never held back). Windows that arrive while the pricing
 page fails are kept even when no rates are cached yet: a machine that only ever runs the hook never starts the dashboard, and
@@ -516,7 +564,20 @@ would otherwise price every new model on a guess for good. Codex and Cursor refr
 dashboard, because their refreshers take no timeout. `AI_USAGE_NO_PRICING_REFRESH=1` keeps every
 command off the network; the test suite runs with it.
 
-A fetched price and a fetched window are taken independently: a refresh bringing only one never
+The z.ai refresher lives in `src/lib/vendors/zai/remote-pricing.mjs`, separate from providers.
+It fetches one page and parses the canonical `Model | Input | Cached Input | Cached Input Storage | Output`
+markdown table, including `$0.6/MTok`, `Free` and `Limited-time Free`. Cached Input is a read;
+storage maps to both write lifetimes. Malformed or partial rows are ignored as a whole, earlier
+valid rows win, and omitted models keep their cached rates. A parse with fewer than three
+models is rejected. Complete rates merge over the bundled table without discarding windows.
+It uses the same 12-hour ttl, 10-second default timeout (5 seconds at install/sync),
+`attemptedAt` one-hour failure backoff, conditional ETag, and statuses: `no-fetch`, `fresh`,
+`backoff`, `not-modified`, `unchanged`, `updated`, `offline`, `http-<code>`, `read-error`, `parse-thin`.
+Only install, sync and dashboard start fetch; imports/hooks/sweeps read the local cache only.
+`AI_USAGE_NO_PRICING_REFRESH=1` disables all default fetches (tests may explicitly inject a fake).
+The standalone viewer bundles the z.ai refresher alongside the existing three refreshers.
+
+For Claude's own models, a fetched price and a fetched window are taken independently: a refresh bringing only one never
 discards the other, and a cache price the page omits keeps the model's own ratio to input rather
 than the generic one. Whether a window is known is tracked apart from whether a rate is: a model
 with a fetched price can still have a guessed window, and one with a fetched window a guessed
@@ -618,7 +679,7 @@ message and no dashboard opens (the Windows shim pauses on that error).
 
 A project gets `viewer/` and nothing else — no `src/` tree beside it — so the modules the bundled
 server imports are copied in next to it, under the names it looks for: `config.mjs`, `store.mjs`, and
-the three per-provider pricing refreshers. `VIEWER_SIDECARS` in `src/lib/ingest.mjs` is that list, and
+the three per-provider pricing refreshers and the shared z.ai vendor refresher. `VIEWER_SIDECARS` in `src/lib/ingest.mjs` is that list, and
 both the installer (building the app) and `ensureBundle` (writing a project's copy) use it, so a
 bundle cannot be missing a module because of which tree wrote it. A sweep run straight from a
 checkout used to produce bundles that died on an import before they could listen.
@@ -704,7 +765,7 @@ Values worth knowing before they surprise you. All are constants in the source, 
 |---|---|
 | `sync --days N` | filters on transcript modification time, then imports each qualifying session whole — it does not filter individual turns |
 | dashboard start | spawns a detached `sync --days 7`, only when the globally installed app exists. Disable with `--no-sync` |
-| pricing refresh | on dashboard start, over the network (disable with `--no-pricing-refresh`); Claude also on `install` and `sync` when the cache is over 12 hours old, 5 s per page. `AI_USAGE_NO_PRICING_REFRESH=1` disables all of it. The hook and sweep paths never fetch |
+| pricing refresh | on dashboard start, over the network (disable with `--no-pricing-refresh`); Claude and z.ai also on `install` and `sync` when the cache is over 12 hours old, 5 s per page. `AI_USAGE_NO_PRICING_REFRESH=1` disables all of it. The hook and sweep paths never fetch |
 | first import of old history | priced at today's rates, since no rate is recorded in the transcript |
 
 **Aggregate mode** (`install.mjs --dashboard`)
@@ -743,7 +804,7 @@ for the whole pool.
   `folder` is read.
 - **OpenCode model catalogue ages until the process re-indexes.** The context window comes from
   `opencode/models.json`, read once per path per parse run, so a model installed after the run
-  began uses the known Claude table, if applicable, or stays `null` until the next run picks the file up.
+  began uses the known Claude or z.ai table, if applicable, or stays `null` until the next run picks the file up.
 - **An OpenCode turn cut off after earlier complete turns is not recorded.** The completed
   turns stay as stored; the cut-off turn's usage appears only if the session later completes.
   A session first seen incomplete has only a rollup until it can be split.

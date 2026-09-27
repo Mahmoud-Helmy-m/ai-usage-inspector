@@ -64,6 +64,11 @@ export function normalize(modelId) {
     .replace(/-\d{8}$/, "");
 }
 
+export function knownModel(modelId) {
+  const id = normalize(modelId);
+  return Object.hasOwn(OVERRIDES, id) || Object.hasOwn(TABLE, id);
+}
+
 export function modelInfo(modelId) {
   const id = normalize(modelId);
   return OVERRIDES[id] || TABLE[id] || FALLBACK;

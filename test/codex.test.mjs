@@ -369,3 +369,16 @@ test("when one rollout exists twice, the fuller copy is the one read", async (t)
   const provider = await import(`../src/providers/codex/index.mjs?twocopies=${Date.now()}`);
   assert.deepEqual(provider.discoverTranscripts({ sinceMs: 0 }).map((f) => f.transcriptPath), [live]);
 });
+
+
+test("zai: Codex rows stamp known OpenAI vendor and unknown null", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ai-usage-vendor-codex-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "rollout.jsonl");
+  for (const [model, vendor] of [["gpt-5.5", "openai"], ["gpt-unknown", null]]) {
+    writeJsonl(file, hierarchyRollout({ model }));
+    const rows = buildTurns(file);
+    assert.equal(rows.length, 3);
+    for (const row of rows) assert.equal(row.vendor, vendor);
+  }
+});

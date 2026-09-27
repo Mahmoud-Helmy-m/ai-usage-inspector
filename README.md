@@ -6,7 +6,7 @@
 
 ![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-success)
-![Tests](https://img.shields.io/badge/tests-391-success)
+![Tests](https://img.shields.io/badge/tests-420-success)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
@@ -110,6 +110,10 @@ npx -y ai-usage-inspector --uninstall   # remove the hooks
 | Cursor | `state.vscdb` SQLite stores | `~/.cursor/hooks.json` | Needs Node >= 22.5. Estimates tokens when Cursor stores no exact counts |
 | OpenCode | `~/.local/share/opencode/opencode.db` | `~/.config/opencode/plugins/` | Needs Node >= 22.5. Tokens **and cost as OpenCode recorded them**; context from the largest single request against OpenCode's own model list; subagent sessions nested under their parent; a session whose per-message accounting is incomplete is stored as one rolled-up row |
 | Cline · Roo · Kilo | `<VSCode>/User/globalStorage/<extId>/tasks/` | none — scan only | Tokens and cost as the extension recorded them. VS Code extensions cannot run a turn-end hook, so these arrive on sync or on the sweep any other agent triggers |
+
+**Model vendor: z.ai (GLM).** The agents above stay the same: GLM models gain published API token rates, known context windows, and a vendor filter. The flat-rate GLM Coding Plan is not a per-turn bill; shown costs are API-equivalent usage.
+
+For Claude Code with z.ai, set `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic` and map your model to a GLM id (for example `GLM-5.3-Flash`).
 
 **Requirements:** Node >= 18, or >= 22.5 for Cursor and OpenCode (they are read from SQLite
 via the built-in `node:sqlite`).
@@ -247,8 +251,8 @@ machine-local coordination file goes away when the server stops and is never sto
 
 The only thing written into an agent's own directory is its hook — listed in the table above,
 and removed by `--uninstall`. Your prompts and costs never leave your machine: the hook and
-sweep paths make no network calls at all. The one thing that does is fetching Anthropic's public
-pricing and models pages — when the dashboard starts, which `--no-pricing-refresh` turns off, and
+sweep paths make no network calls at all. Pricing refresh fetches Anthropic's public
+pricing and models pages plus a second vendor pricing request to [z.ai](https://docs.z.ai/guides/overview/pricing) — when the dashboard starts, which `--no-pricing-refresh` turns off, and
 during `install` and `sync` at most twice a day. Set `AI_USAGE_NO_PRICING_REFRESH=1` to keep every
 command off the network.
 

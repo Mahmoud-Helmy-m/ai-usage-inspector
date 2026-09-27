@@ -198,12 +198,13 @@ const GROUP_KEYS = {
   skills: ["skills"],
   counts: ["counts"],
   subagents: ["subagents"],
-  meta: ["slug", "gitBranch", "cliVersion", "entrypoint", "serviceTier", "speed", "effortLevel", "sessionName", "sessionTitle"],
+  meta: ["vendor", "slug", "gitBranch", "cliVersion", "entrypoint", "serviceTier", "speed", "effortLevel", "sessionName", "sessionTitle"],
 };
 
 // A subagent run carries its own share of what these groups control, so turning
 // one off has to reach inside the run tree as well.
 const RUN_GROUP_KEYS = {
+  meta: ["vendor"],
   context: ["contextTokens", "contextMax", "contextFillPct"],
   counts: ["counts"],
   text: ["description"],

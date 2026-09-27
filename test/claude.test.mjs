@@ -448,7 +448,7 @@ test("a parsed turn carries the rate revision its cost was worked out under", (t
     asst("2026-09-10T10:00:01.000Z", "m1", [{ type: "text", text: "ok" }], usage(10, 1, { cache_read_input_tokens: 1_000_000 }), { message: { model: "claude-fable-5-1" } }),
   ]);
   const [turn] = buildTurns(s.file);
-  assert.equal(turn.cost.rates, 2);
+  assert.equal(turn.cost.rates, 3);
   assert.equal(turn.cost.supersedes, 2);
   assert.equal(turn.cost.cacheRead, 0.25, "a million cache-read tokens on Fable 5.1");
 });

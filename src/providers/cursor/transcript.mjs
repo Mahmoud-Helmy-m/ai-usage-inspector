@@ -12,6 +12,7 @@
 //  - Model name often absent locally -> "cursor-auto".
 //  - Bubble timestamps generally absent -> all turns stamped with the
 //    composer's createdAt; durations unknowable (0).
+import { vendorOf } from "../../lib/vendors/index.mjs";
 import { costOf, contextMax } from "./pricing.mjs";
 import { globalDbPath, readComposer } from "./store.mjs";
 
@@ -199,6 +200,7 @@ function finalizeTurn(t, ctx) {
     response: t.response,
     responseChars: t.response.length,
     model: ctx.model,
+    vendor: vendorOf(ctx.model),
     serviceTier: null,
     speed: null,
     permissionMode: "default",
@@ -207,7 +209,7 @@ function finalizeTurn(t, ctx) {
     usage: tokens,
     contextTokens: ctxTokens,
     contextMax: ctxMax,
-    contextFillPct: ctxMax ? Math.round((ctxTokens / ctxMax) * 1000) / 10 : 0,
+    contextFillPct: ctxMax ? Math.round((ctxTokens / ctxMax) * 1000) / 10 : null,
     counts: {
       apiCalls: t.apiCalls,
       subagentCalls: 0,

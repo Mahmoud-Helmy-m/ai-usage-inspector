@@ -13,6 +13,7 @@
 //  - The session's name is a `custom-title` line, written again as the session
 //    goes on; the last one is current. An unnamed session gets `ai-title` lines.
 
+import { vendorOf } from "../../lib/vendors/index.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -236,14 +237,14 @@ function contextOf(messages, fallbackModel) {
   const u = (last && last.usage) || {};
   const used = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
   let max = contextMax(model);
-  // A model this version has no window for is measured against a guess, and a
+  // Unknown Claude windows retain their guess; unknown GLM windows stay null. A
   // request larger than the guess proves the guess wrong: Claude's only window
   // above 200k is 1M. Better that than a context reported several times full.
-  if (!modelInfo(model).windowKnown && used > max) max = 1_000_000;
+  if (max !== null && !modelInfo(model).windowKnown && used > max) max = 1_000_000;
   return {
     contextTokens: used,
     contextMax: max,
-    contextFillPct: max ? Math.round((used / max) * 1000) / 10 : 0,
+    contextFillPct: max ? Math.round((used / max) * 1000) / 10 : null,
   };
 }
 
@@ -366,6 +367,7 @@ function runRecord(run, seen, messages) {
     background: Boolean(run.call.run_in_background || run.result.isAsync),
     status: run.result.status || null,
     model: (last && last.model) || run.result.resolvedModel || null,
+    vendor: vendorOf((last && last.model) || run.result.resolvedModel),
     ts: run.ts,
     endTs,
     durationMs: run.ts && endTs ? Math.max(0, Date.parse(endTs) - Date.parse(run.ts)) : 0,
@@ -519,6 +521,7 @@ function finalizeTurn(t, opts, session) {
     response,
     responseChars: response.length,
     model,
+    vendor: vendorOf(model),
     serviceTier: (last && last.serviceTier) || null,
     speed: (last && last.speed) || null,
     permissionMode: e.permissionMode || "default",

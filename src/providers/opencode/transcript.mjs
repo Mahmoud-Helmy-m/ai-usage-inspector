@@ -20,10 +20,12 @@
 //  - A subagent run is a child session whose parent_id names its parent. Its
 //    rows carry parentSessionId + agent; the parent's task-tool parts name the
 //    children it spawned. Each session stays its own record (as for Codex).
+import { vendorOf } from "../../lib/vendors/index.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readSession, parentChainDepth } from "./store.mjs";
+import { isGlm, knownContextMax as zaiContextMax } from "../../lib/vendors/zai/pricing.mjs";
 import { knownContextMax } from "../claude/pricing.mjs";
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -161,6 +163,7 @@ function contextMax(providerId, model) {
   const fromCatalog = modelsWindow(providerId, model);
   if (fromCatalog !== null) return fromCatalog;
   const m = String(model || "").toLowerCase();
+  if (isGlm(m)) return zaiContextMax(m);
   if (m.startsWith("claude-")) return knownContextMax(m);
   return null;
 }
@@ -452,6 +455,7 @@ function record(r) {
     response: r.response,
     responseChars: r.response.length,
     model: r.model,
+    vendor: vendorOf(r.model),
     serviceTier: null,
     speed: null,
     permissionMode: "default",

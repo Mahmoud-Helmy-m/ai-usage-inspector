@@ -212,3 +212,27 @@ test("a workspace with unreadable composer JSON yields no transcripts but no thr
   assert.equal(result.status, "ok");
   assert.deepEqual(result.transcripts, []);
 });
+
+
+test("zai: Cursor preserves its rates with exact counts and adds vendor windows", needsSqlite, async (t) => {
+  const ids = ["GLM-5.3-Flash", "glm-5.2", "glm-unknown"];
+  const { costOf } = await import("../src/providers/cursor/pricing.mjs");
+  await fixture(t, { composers: Object.fromEntries(ids.map((model, i) => [`glm-${i}`, composer([
+    { bubbleId: "u", type: 1, text: "synthetic" },
+    { bubbleId: "a", type: 2, text: "done", modelType: model, tokenUsage: { inputTokens: 10000, outputTokens: 100, cacheReadTokens: 100 } },
+  ])])) });
+  const p = await provider();
+  for (const [i, model] of ids.entries()) {
+    const [row] = await p.buildTurns({ composerId: `glm-${i}` });
+    assert.equal(row.vendor, "z.ai");
+    assert.equal(row.provider, "cursor");
+    assert.equal(row.cost.total, costOf(model, { input: 10000, cached: 100, output: 100 }).total);
+    assert.equal(row.contextMax, i === 0 ? 1000000 : null);
+    assert.equal(row.contextFillPct, i === 0 ? 1 : null);
+  }
+  applyCursorRates({ "glm-5.3-flash": { input: 9, cachedInput: 2, output: 10 } });
+  const [priced] = await p.buildTurns({ composerId: "glm-0" });
+  assert.equal(priced.cost.total, .0912);
+  assert.equal(priced.cost.source, "priced");
+  assert.equal(priced.contextMax, 1000000, "a Cursor price override is not a known window");
+});

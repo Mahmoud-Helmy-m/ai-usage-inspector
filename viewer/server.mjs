@@ -109,6 +109,7 @@ async function loadPricing(bundle, repo) {
   }
 }
 const PRICING = [
+  { label: "z.ai", mod: await loadPricing("./remote-pricing-zai.mjs", "../src/lib/vendors/zai/remote-pricing.mjs") },
   { label: "claude", mod: await loadPricing("./remote-pricing.mjs", "../src/providers/claude/remote-pricing.mjs") },
   { label: "openai", mod: await loadPricing("./remote-pricing-codex.mjs", "../src/providers/codex/remote-pricing.mjs") },
   { label: "cursor", mod: await loadPricing("./remote-pricing-cursor.mjs", "../src/providers/cursor/remote-pricing.mjs") },

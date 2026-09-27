@@ -9,6 +9,7 @@
 //   buildTurns(transcriptPath, opts) -> [turnRecord]
 //   install({ appPath, scope, cwd }) / uninstall({ scope, cwd })
 //   refreshPricing()
+import { isGlm } from "../../lib/vendors/zai/pricing.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { HOME, encCwd } from "../../lib/paths.mjs";
@@ -200,6 +201,11 @@ export async function repairStoredContext(files) {
       const next = records.map((r) => {
         if ((r.provider || "claude") !== "claude" || typeof r.contextTokens !== "number") return r;
         const window = knownContextMax(r.model);
+        // A vanished GLM transcript must not leave an old Anthropic window guess.
+        if (isGlm(r.model) && window === null && (r.contextMax != null || r.contextFillPct != null)) {
+          changed++;
+          return { ...r, contextMax: null, contextFillPct: null };
+        }
         if (!window || r.contextMax === window || r.contextTokens > window) return r;
         changed++;
         return { ...r, contextMax: window, contextFillPct: Math.round((r.contextTokens / window) * 1000) / 10 };

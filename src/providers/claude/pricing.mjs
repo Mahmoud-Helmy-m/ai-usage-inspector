@@ -4,6 +4,7 @@
 // override it when available (see remote-pricing.mjs / applyRemoteRates).
 // Cache writes: 5m = 1.25x input, 1h = 2x input. Cache reads = 0.1x input,
 // except where a model publishes its own cache prices.
+import { isGlm, modelInfo as zaiModelInfo } from "../../lib/vendors/zai/pricing.mjs";
 import { M, zeroCost, addCost } from "../../lib/pricing-core.mjs";
 import { readCachedRates, readCachedWindows } from "./remote-pricing.mjs";
 
@@ -12,7 +13,7 @@ import { readCachedRates, readCachedWindows } from "./remote-pricing.mjs";
 // a stored cost from before that revision is worked out again on the next read
 // instead of being kept. Stored costs are otherwise never rewritten — what a
 // turn cost at the time stands — but these were never Anthropic's prices.
-export const RATES_REVISION = 2;
+export const RATES_REVISION = 3;
 const CORRECTED_IN = {
   // Missing from the table before revision 2. Without fetched rates they were
   // priced at the Opus-tier guess — Sonnet 5 2.5x too high, Fable and Mythos 5.1
@@ -126,8 +127,15 @@ export function normalize(modelId) {
   return String(modelId || "").replace(/-\d{8}$/, "");
 }
 
-/** Look up the pricing/context record for a model id (never throws). */
+/** Whether the Anthropic table or its fetched overrides know this model. */
+export function knownModel(modelId) {
+  const id = normalize(modelId);
+  return Object.hasOwn(OVERRIDES, id) || Object.hasOwn(TABLE, id);
+}
+
 export function modelInfo(modelId) {
+  // Unknown GLM keeps the provider's explicit estimated fallback, never its window guess.
+  if (isGlm(modelId)) return zaiModelInfo(modelId) || { ...FALLBACK, contextMax: null };
   const id = normalize(modelId);
   return OVERRIDES[id] || TABLE[id] || FALLBACK;
 }
@@ -160,17 +168,19 @@ export function costOf(modelId, usage) {
 
   const input = ((usage.input_tokens || 0) * r.input) / M;
   const output = ((usage.output_tokens || 0) * r.output) / M;
-  const cacheRead = ((usage.cache_read_input_tokens || 0) * r.cacheRead) / M;
+  const cacheRead = ((usage.cache_read_input_tokens || 0) * (r.cacheRead ?? r.input)) / M;
   const cacheWrite = (c5m * r.cacheWrite5m + c1h * r.cacheWrite1h) / M;
+  const estimated = r.estimated || (r.cacheRead === null && (usage.cache_read_input_tokens || 0) > 0);
   return {
     input,
     output,
     cacheRead,
     cacheWrite,
     total: input + output + cacheRead + cacheWrite,
-    source: r.estimated ? "estimated" : "priced",
-    ...(r.estimated ? { estimatedRate: true } : {}),
+    source: estimated ? "estimated" : "priced",
+    ...(estimated ? { estimatedRate: true } : {}),
     rates: RATES_REVISION,
+    ...(isGlm(modelId) && zaiModelInfo(modelId) ? { supersedes: 3 } : {}),
     ...(CORRECTED_IN[normalize(modelId)] ? { supersedes: CORRECTED_IN[normalize(modelId)] } : {}),
   };
 }

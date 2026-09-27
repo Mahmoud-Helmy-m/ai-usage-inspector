@@ -11,7 +11,7 @@ const state = {
   all: [],
   view: [],
   sort: { key: "ts", dir: -1 },
-  filters: { search: "", provider: "", platform: "", workspace: "", model: "", mode: "", effort: "", since: "", until: "", ctx: 0 },
+  filters: { search: "", provider: "", platform: "", workspace: "", model: "", vendor: "", mode: "", effort: "", since: "", until: "", ctx: 0 },
   zoom: null,                     // {from,to} day keys the time charts are showing;
                                   // a view of the same data, not a filter on it
   chartView: { axis: "calendar", grain: "auto", hidden: [] },
@@ -116,9 +116,9 @@ async function exportRecords(kind) {
     if (!Array.isArray(full) || !full.length) toast("full text unavailable — exported previews");
     download(`ai-usage-${stamp}.json`, JSON.stringify(out, null, 2), "application/json");
   } else {
-    const cols = ["ts", "provider", "platform", "workspace", "sessionId", "model", "permissionMode", "promptChars", "responseChars", "input", "output", "reasoning", "cacheRead", "cacheWrite", "costTotal", "costSource", "estimated", "estimatedRate", "durationMs", "contextFillPct", "sessionName", "subagentRuns", "subagentCost"];
+    const cols = ["ts", "provider", "platform", "workspace", "sessionId", "model", "vendor", "permissionMode", "promptChars", "responseChars", "input", "output", "reasoning", "cacheRead", "cacheWrite", "costTotal", "costSource", "estimated", "estimatedRate", "durationMs", "contextFillPct", "sessionName", "subagentRuns", "subagentCost"];
     const line = (e) => [
-      e.ts, PROV(e), e.entrypoint || "", e.workspace, e.sessionId, e.model, e.permissionMode,
+      e.ts, PROV(e), e.entrypoint || "", e.workspace, e.sessionId, e.model, has("meta") ? e.vendor : null, e.permissionMode,
       e.promptChars, e.responseChars,
       T_IN(e), T_OUT(e), (e.usage && e.usage.reasoning) || 0, (e.usage && e.usage.cacheRead) || 0, (e.usage && e.usage.cacheCreate) || 0,
       COST(e), (e.cost && e.cost.source) || "", COST_ESTIMATED(e) ? 1 : 0,
@@ -199,6 +199,7 @@ function applySettingsVisibility() {
     grid.classList.toggle("hide-col-cost", !has("cost"));
   }
   const eff = $("#ctl-effort"); if (eff) eff.hidden = !has("meta");
+  const vendor = $("#ctl-vendor"); if (vendor) vendor.hidden = !has("meta");
   const plat = $("#ctl-platform"); if (plat) plat.hidden = !has("meta");
   const ctx = $("#ctl-ctx"); if (ctx) ctx.hidden = !has("context");
 }
@@ -235,6 +236,7 @@ function reflect() {
   $("#f-platform").value = f.platform || "";
   $("#f-workspace").value = f.workspace || "";
   $("#f-model").value = f.model || "";
+  $("#f-vendor").value = f.vendor || "";
   $("#f-mode").value = f.mode || "";
   $("#f-effort").value = f.effort || "";
   $("#f-since").value = f.since || "";
@@ -299,6 +301,7 @@ function buildFilterOptions() {
   fillSelect("#f-platform", uniq("entrypoint"), "platforms");
   fillSelect("#f-workspace", uniq("workspace"), "workspaces");
   fillSelect("#f-model", uniq("model"), "models");
+  fillSelect("#f-vendor", uniq("vendor"), "vendors");
   fillSelect("#f-mode", uniq("permissionMode"), "modes");
   fillSelect("#f-effort", [...new Set(state.all.map((e) => e.effortLevel).filter(Boolean))].sort(), "efforts");
 }
@@ -312,6 +315,7 @@ function apply() {
     if (f.platform && e.entrypoint !== f.platform) return false;
     if (f.workspace && e.workspace !== f.workspace) return false;
     if (f.model && e.model !== f.model) return false;
+    if (has("meta") && f.vendor && e.vendor !== f.vendor) return false;
     if (f.mode && e.permissionMode !== f.mode) return false;
     if (f.effort && e.effortLevel !== f.effort) return false;
     if (f.since && dayKey(e.ts) < f.since) return false;
@@ -1557,6 +1561,7 @@ async function openDrawer(id, provider, session) {
   // meta spans (omit when the `meta`/`timing` group is stripped)
   const meta = [`<span>${fmtWhen(e.ts)}</span>`, `<span>${esc(e.model)}</span>`,
     `<span class="tag ${esc(e.permissionMode)}">${esc(e.permissionMode)}</span>`];
+  if (has("meta") && e.vendor) meta.push(`<span>vendor: ${esc(e.vendor)}</span>`);
   if (e.effortLevel) meta.push(`<span>effort: ${esc(e.effortLevel)}</span>`);
   if (e.durationMs != null) meta.push(`<span>${fmtDur(e.durationMs)}</span>`);
   if (e.firstResponseMs != null) meta.push(`<span>1st reply ${fmtDur(e.firstResponseMs)}</span>`);
@@ -1631,7 +1636,7 @@ const FIELD_META = [
   ["skills", "skills", "skills invoked per prompt"],
   ["counts", "tool counts", "api / subagent / tool / thinking counts"],
   ["subagents", "subagent runs", "each run's type, description, tokens, cost and time"],
-  ["meta", "metadata", "session names, git branch, cli version, slug, tier, effort"],
+  ["meta", "metadata", "vendor, session names, git branch, cli version, slug, tier, effort"],
 ];
 function renderSettings() {
   const panel = $("#settings-panel");
@@ -1690,12 +1695,12 @@ function initTheme() {
 // ---------- events ----------
 function bind() {
   $("#f-search").addEventListener("input", (e) => { state.filters.search = e.target.value; onSearchInput(); });
-  const map = { "#f-provider": "provider", "#f-platform": "platform", "#f-workspace": "workspace", "#f-model": "model", "#f-mode": "mode", "#f-effort": "effort", "#f-since": "since", "#f-until": "until" };
+  const map = { "#f-provider": "provider", "#f-platform": "platform", "#f-workspace": "workspace", "#f-model": "model", "#f-vendor": "vendor", "#f-mode": "mode", "#f-effort": "effort", "#f-since": "since", "#f-until": "until" };
   for (const [sel, key] of Object.entries(map)) $(sel).addEventListener("change", (e) => { state.filters[key] = e.target.value; apply(); });
   $("#f-ctx").addEventListener("input", (e) => { state.filters.ctx = +e.target.value; $("#f-ctx-v").textContent = e.target.value; apply(); });
   $("#f-group").addEventListener("change", (e) => { state.group = e.target.checked; renderTable(); persist(); });
   $("#f-clear").addEventListener("click", () => {
-    state.filters = { search: "", provider: "", platform: "", workspace: "", model: "", mode: "", effort: "", since: "", until: "", ctx: 0 };
+    state.filters = { search: "", provider: "", platform: "", workspace: "", model: "", vendor: "", mode: "", effort: "", since: "", until: "", ctx: 0 };
     state.zoom = null;
     document.querySelectorAll(".ctl select").forEach((s) => (s.value = ""));
     $("#f-search").value = ""; $("#f-since").value = ""; $("#f-until").value = ""; $("#f-ctx").value = 0; $("#f-ctx-v").textContent = "0";

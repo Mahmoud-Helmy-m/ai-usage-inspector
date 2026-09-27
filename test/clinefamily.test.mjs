@@ -85,3 +85,22 @@ test("Kilo stores null context window and fill when the model window is unknown"
     assert.equal(row.contextMax, null); assert.equal(row.contextFillPct, null);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+
+test("zai: Cline Roo Kilo retain reported cost and use vendor windows", async (t) => {
+  const { cline, roo } = await import("../src/providers/clinefamily/index.mjs");
+  for (const provider of [cline, roo, kilo]) for (const [model, window] of [["zai/GLM-5.3-Flash", 1000000], ["glm-5.2", null], ["glm-unknown", null]]) {
+    const dir = makeTask([
+      { ts: 1000, type: "say", say: "text", text: "synthetic" },
+      { ts: 1001, ...apiReq({ model, tokensIn: 10000, tokensOut: 100, cost: 7.25 }) },
+    ]);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const [row] = provider.buildTurns({ taskId: "glm", dir }, {});
+    assert.equal(row.provider, provider.id);
+    assert.equal(row.vendor, "z.ai");
+    assert.equal(row.cost.total, 7.25);
+    assert.equal(row.cost.source, "provider");
+    assert.equal(row.contextMax, window);
+    assert.equal(row.contextFillPct, window ? 1 : null);
+  }
+});

@@ -1065,7 +1065,7 @@ test("context observation is shared by charts stats table drawer filters and CSV
   assert.deepEqual([...ui.run("state.view.map(r=>r.id)")], [records[0].id]);
   ui.run("state.filters.ctx=0; apply(); globalThis.exported=''; download=(name,text)=>{exported=text}; toast=()=>{}");
   await ui.run('exportRecords("csv")');
-  const cells = ui.run("exported.split('\\r\\n').slice(1).map(line=>line.split(',')[19])");
+  const cells = ui.run("exported.split('\\r\\n').slice(1).map(line=>line.split(',')[20])");
   assert.deepEqual([...cells], ["80", "0", "", "", "", "", ""]);
   ui.run("state.view=records.slice(2); renderStats()");
   assert.match(ui.run('document.querySelector("#stats").innerHTML'), /avg context<\/div>\s*<div class="val">\u2014<\/div>/);
@@ -1292,4 +1292,47 @@ test("every overview action leaves stats, table and the date filter alone", () =
   assert.equal(ui.run('state.zoom'), null);
   assert.equal(ui.run('document.querySelector("#stats").innerHTML'), stats);
   assert.equal(ui.html(), table);
+});
+
+
+test("zai: viewer vendor filter options binding reset and meta visibility", () => {
+  const ui = viewerUi([{ ...RECORDS[0], vendor: "z.ai" }, { ...RECORDS[1], vendor: "openai" }, RECORDS[2]]);
+  ui.run('bind(); persist = () => {}; renderStats = () => {}; renderCharts = () => {}; renderTable = () => {}; buildFilterOptions();');
+  assert.match(ui.run('$("#f-vendor").innerHTML'), /value="z.ai"/);
+  ui.run('$("#f-vendor").listeners.change({ target: { value: "z.ai" } });');
+  assert.equal(ui.run('state.view.length'), 1);
+  assert.equal(ui.run('state.view[0].vendor'), "z.ai");
+  ui.run('state.filters.vendor = "openai"; reflect();');
+  assert.equal(ui.run('$("#f-vendor").value'), "openai");
+  ui.run('$("#grid").classList = { toggle() {} }; state.fields.meta = false; apply(); applySettingsVisibility();');
+  assert.equal(ui.run('state.view.length'), 3);
+  assert.equal(ui.run('$("#ctl-vendor").hidden'), true);
+  ui.run('$("#f-clear").listeners.click();');
+  assert.equal(ui.run('state.filters.vendor'), "");
+  const html = fs.readFileSync(path.join(path.dirname(SERVER), "public", "index.html"), "utf8");
+  assert.match(html, /id="f-model"[\s\S]*id="ctl-vendor"[\s\S]*id="f-vendor"/);
+});
+
+test("zai: viewer drawer vendor line respects meta visibility", async () => {
+  const ui = viewerUi([{ ...RECORDS[0], vendor: "z.ai" }]);
+  ui.run('fetch = async () => ({ json: async () => records[0] });');
+  await ui.run('openDrawer(records[0].id, "claude", "s1")');
+  assert.match(ui.run('$("#drawer-panel").innerHTML'), /vendor: z.ai/);
+  ui.run('state.fields.meta = false;');
+  await ui.run('openDrawer(records[0].id, "claude", "s1")');
+  assert.doesNotMatch(ui.run('$("#drawer-panel").innerHTML'), /vendor: z.ai/);
+});
+
+test("zai: viewer CSV exports vendor beside model including empty unknowns", async () => {
+  const ui = viewerUi([{ ...RECORDS[0], vendor: "z.ai" }, RECORDS[1]]);
+  ui.run('download = (name, text) => { globalThis.csv = text; }; toast = () => {};');
+  await ui.run('exportRecords("csv")');
+  const lines = ui.run('csv').split("\r\n").map((line) => line.split(","));
+  const col = lines[0].indexOf("vendor");
+  assert.equal(col, lines[0].indexOf("model") + 1);
+  assert.equal(lines[1][col], "z.ai");
+  assert.equal(lines[2][col], "");
+  ui.run('state.fields.meta = false;');
+  await ui.run('exportRecords("csv")');
+  assert.equal(ui.run('csv').split("\r\n")[1].split(",")[col], "");
 });

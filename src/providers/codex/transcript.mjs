@@ -12,6 +12,7 @@
 // Token usage is cumulative in total_token_usage, so a turn's usage is the delta
 // of the running total across that turn — robust to multiple model calls per turn
 // (tool loops). Older flat formats (no `payload` wrapper) are tolerated.
+import { vendorOf } from "../../lib/vendors/index.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { HOME } from "../../lib/paths.mjs";
@@ -421,6 +422,7 @@ function finalizeTurn(t, ctx) {
     response: t.response,
     responseChars: t.response.length,
     model,
+    vendor: vendorOf(model),
     serviceTier: null,
     speed: null,
     permissionMode: ctx.permissionMode || "default",
