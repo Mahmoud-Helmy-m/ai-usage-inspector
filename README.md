@@ -65,7 +65,7 @@ ai-usage-inspector
 ```
 
 To run the unreleased tip instead, point npx at the repo:
-`npx -y github:Kud0o/ai-usage-inspector`.
+`npx -y github:Mahmoud-Helmy-m/ai-usage-inspector`.
 
 That looks for each agent’s own data directory, and registers a hook wherever one can run. Then just
 use your agent — each project becomes self-contained, with its data, its own copy of the

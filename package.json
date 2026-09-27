@@ -13,11 +13,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Kud0o/ai-usage-inspector.git"
+    "url": "git+https://github.com/Mahmoud-Helmy-m/ai-usage-inspector.git"
   },
-  "homepage": "https://github.com/Kud0o/ai-usage-inspector#readme",
+  "homepage": "https://github.com/Mahmoud-Helmy-m/ai-usage-inspector#readme",
   "bugs": {
-    "url": "https://github.com/Kud0o/ai-usage-inspector/issues"
+    "url": "https://github.com/Mahmoud-Helmy-m/ai-usage-inspector/issues"
   },
   "engines": {
     "node": ">=18"
