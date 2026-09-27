@@ -117,8 +117,38 @@ test("once a new model's rate is known, the turns stored as estimates are priced
   assert.ok(after.cost.total < before.cost.total, "the guess was higher than the real rate");
   assert.equal(rows(store).length, 1, "re-read in place, nothing duplicated");
 
+  assert.equal(c.priced, 1, "counts what actually became priced");
+
   c = await correctEstimatedCosts(claude, { transcripts: [ref] });
   assert.equal(c.rows, 0, "a second pass finds nothing left to price");
+});
+
+test("a turn whose guess came from a message the row does not name stays an estimate, and is not counted as priced", async (t) => {
+  const project = tmp(t, "est-hidden");
+  const transcriptDir = tmp(t, "est-hidden-t");
+  const sid = "0f0f0f0f-1111-4222-8333-555555555555";
+  const transcriptPath = path.join(transcriptDir, `${sid}.jsonl`);
+  const u = { input_tokens: 500, output_tokens: 800, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  // A still-unknown model answers first; a known one answers last and names the turn.
+  fs.writeFileSync(transcriptPath, [
+    { type: "user", uuid: "u1", sessionId: sid, cwd: project, timestamp: "2026-09-26T22:00:00.000Z", message: { role: "user", content: "hi" } },
+    { type: "assistant", uuid: "a1", parentUuid: "u1", sessionId: sid, cwd: project, timestamp: "2026-09-26T22:00:10.000Z",
+      message: { id: "m1", role: "assistant", model: "claude-still-unknown-3", usage: u, content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] } },
+    { type: "user", uuid: "u2", parentUuid: "a1", sessionId: sid, cwd: project, timestamp: "2026-09-26T22:00:11.000Z",
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "x" }] } },
+    { type: "assistant", uuid: "a2", parentUuid: "u2", sessionId: sid, cwd: project, timestamp: "2026-09-26T22:00:20.000Z",
+      message: { id: "m2", role: "assistant", model: "claude-opus-5", usage: u, content: [{ type: "text", text: "ok" }] } },
+  ].map((e) => JSON.stringify(e)).join("\n") + "\n");
+  const ref = { transcriptPath, cwd: project };
+  await ingestTranscript(claude, ref);
+  const store = path.join(project, ".ai-usage", "usage.ndjson");
+  const [stored] = rows(store);
+  assert.equal(stored.cost.source, "estimated");
+  if (stored.model !== "claude-opus-5") return; // the row names the unknown model: nothing looks priceable
+  const c = await correctEstimatedCosts(claude, { transcripts: [ref] });
+  assert.equal(c.rows, 1, "looks priceable from what the row records");
+  assert.equal(c.priced, 0, "but the re-read is still an estimate, and is not reported as priced");
+  assert.equal(rows(store)[0].cost.source, "estimated");
 });
 
 // ---------- the worker ----------

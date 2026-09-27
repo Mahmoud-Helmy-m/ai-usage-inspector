@@ -157,7 +157,7 @@ async function noteInstall(upgrading) {
   // transcripts; a cost already priced from a real rate is never restated.
   try {
     const c = await correctEstimatedCosts(getProvider("claude"));
-    if (c.reread) ok(`prices   ${c.rows} estimated turn(s) re-priced at real rates`);
+    if (c.priced) ok(`prices   ${c.priced} estimated turn(s) re-priced at real rates`);
   } catch {}
 }
 

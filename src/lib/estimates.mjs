@@ -78,10 +78,13 @@ export function correctable(row, priced) {
 
 /**
  * Re-read the transcripts behind this provider's estimated rows whose models now have a real
- * rate. Returns { stores, rows, transcripts, reread }. Never throws for one bad transcript.
+ * rate. Returns { stores, rows, transcripts, reread, priced }: `rows` looked priceable from what
+ * a row records, `priced` actually became priced. They differ when a row's guess came from a
+ * message whose model the row does not name — a run is labelled with its last message's model —
+ * and such a row simply stays an estimate. Never throws for one bad transcript.
  */
 export async function correctEstimatedCosts(provider, { transcripts = null } = {}) {
-  const out = { stores: 0, rows: 0, transcripts: 0, reread: 0 };
+  const out = { stores: 0, rows: 0, transcripts: 0, reread: 0, priced: 0 };
   if (!provider || typeof provider.pricedModel !== "function" || typeof provider.transcriptId !== "function") return out;
   const found = transcripts || (typeof provider.discoverTranscripts === "function" ? await provider.discoverTranscripts({ sinceMs: 0 }) : []);
   const byId = new Map();
@@ -93,17 +96,23 @@ export async function correctEstimatedCosts(provider, { transcripts = null } = {
   }
   const stores = storesOf(found);
   out.stores = stores.length;
-  const wanted = new Set();
-  for (const store of stores) {
-    for (const row of readJsonl(store)) {
-      if ((row.provider || "claude") !== provider.id || row.transcriptId == null) continue;
-      if (!correctable(row, (m) => provider.pricedModel(m))) continue;
-      out.rows++;
-      wanted.add(String(row.transcriptId));
+  const priceable = () => {
+    const ids = new Set();
+    let rows = 0;
+    for (const store of stores) {
+      for (const row of readJsonl(store)) {
+        if ((row.provider || "claude") !== provider.id || row.transcriptId == null) continue;
+        if (!correctable(row, (m) => provider.pricedModel(m))) continue;
+        rows++;
+        ids.add(String(row.transcriptId));
+      }
     }
-  }
-  out.transcripts = wanted.size;
-  for (const id of wanted) {
+    return { rows, ids };
+  };
+  const before = priceable();
+  out.rows = before.rows;
+  out.transcripts = before.ids.size;
+  for (const id of before.ids) {
     const ref = byId.get(id);
     if (!ref) continue;
     try {
@@ -111,5 +120,6 @@ export async function correctEstimatedCosts(provider, { transcripts = null } = {
       out.reread++;
     } catch {}
   }
+  if (out.reread) out.priced = Math.max(0, before.rows - priceable().rows);
   return out;
 }

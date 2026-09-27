@@ -6,7 +6,7 @@
 
 ![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-success)
-![Tests](https://img.shields.io/badge/tests-428-success)
+![Tests](https://img.shields.io/badge/tests-429-success)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 </div>

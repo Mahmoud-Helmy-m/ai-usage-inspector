@@ -147,7 +147,7 @@ async function main() {
   if (ratesLearned && claudeProvider && process.env.AI_USAGE_RELABEL !== "1") {
     try {
       const c = await correctEstimatedCosts(claudeProvider);
-      if (c.reread) console.log(`  claude: ${c.rows} estimated turn(s) priced at real rates, from ${c.reread} transcript(s)`);
+      if (c.priced) console.log(`  claude: ${c.priced} estimated turn(s) priced at real rates, from ${c.reread} transcript(s)`);
     } catch {}
   }
 
