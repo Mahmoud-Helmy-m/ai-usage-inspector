@@ -774,6 +774,34 @@ Pools every project into `~/.ai-usage-inspector/aggregate`, one `<encoded-cwd>.n
 There is no per-project folder, so that dashboard's own `config.json` governs tracking and fields
 for the whole pool.
 
+## Estimates that become prices
+
+A model released after this machine last fetched rates is priced from a fallback and stored as
+`estimated`. Two pieces close that gap without putting the hook online:
+
+- **The worker refreshes rates.** After it drains the spool and sweeps, `refreshRatesAndCorrect`
+  in [`src/worker.mjs`](../src/worker.mjs) runs the Claude and z.ai refreshers with their usual
+  12-hour ttl — or one hour for the vendor whose model a turn in this run had to guess. Claude's
+  pricing module records those guesses (`guessedModels`): only ids that look like a model and only
+  turns that used tokens, so `<synthetic>` and `unknown` never trigger a fetch. Each refresher
+  keeps its own one-hour backoff after a failure, and `AI_USAGE_NO_PRICING_REFRESH=1` blocks them.
+- **Stored estimates are priced again.** When a refresh learned new rates, or a guess from this
+  run is already priceable, [`src/lib/estimates.mjs`](../src/lib/estimates.mjs) finds the Claude
+  rows that are `estimated` and whose every guessed part (the turn and any run marked estimated)
+  now has a real rate, and re-reads only the transcripts behind them (rows name their transcript).
+  Re-reading, not recomputing from a row's totals: a turn or run can mix models, and only the
+  parser prices each message at its own model. `sync` does the same after a refresh that learned
+  something, and `install` runs it once on every install as a catch-up.
+
+The store accepts the new figure because `preserveComputedCost` no longer protects a wrong
+estimate: an estimated stored cost is replaced by a priced one for the same tokens when the amounts
+differ, runs included. It never moves the other way, and an estimate that landed on the real amount
+keeps its label, so a process that loaded the rate cache late cannot make a row flicker; `--relabel`
+still clears such a label without changing the amount, and never changes one itself.
+
+Finding the stores reads only the head of each transcript for the folder its first turn names —
+the rule `storeTurns` places rows by — or, pooled, every file in `AI_USAGE_DIR`.
+
 ## Known limits
 
 - **A session spanning sources can span stores.** Home selection is per parsed source, not a

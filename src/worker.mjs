@@ -9,6 +9,8 @@ import { globalConfigPath } from "./lib/config.mjs";
 import { getProvider, detectInstalled } from "./providers/index.mjs";
 import { scanWindow, recordScanResult, claimScan, readScanState } from "./lib/scan-state.mjs";
 import { backupCandidateStores, candidateStores, cleanUpCopies } from "./lib/copies.mjs";
+import { correctEstimatedCosts } from "./lib/estimates.mjs";
+import { refreshPricing as refreshZaiPricing } from "./lib/vendors/zai/pricing.mjs";
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -404,6 +406,50 @@ export function shouldSweepNow({ now = Date.now(), starvationMs = SWEEP_STARVATI
   return msSinceLastScan(now, providers) >= starvationMs;
 }
 
+const HOUR_MS = 60 * 60 * 1000;
+const RATES_TTL_MS = 12 * HOUR_MS;
+
+/**
+ * Keep rates current from the worker, which already runs detached and off the agent's clock.
+ * The hook itself never goes online. Rates are refetched once they are twelve hours old — or
+ * after one hour when a turn this run had to guess a model's price, so a model released since
+ * the last fetch gets its real rate within the hour instead of within the day. Each refresher
+ * keeps its own backoff after a failure, and AI_USAGE_NO_PRICING_REFRESH=1 keeps them offline.
+ * When the rates learned anything, stored estimates that can now be priced are priced.
+ * Everything is injectable for tests; nothing here may throw.
+ */
+export async function refreshRatesAndCorrect({
+  claude = getProvider("claude"),
+  refreshZai = refreshZaiPricing,
+  correct = correctEstimatedCosts,
+  timeoutMs = 5_000,
+} = {}) {
+  const result = { guessed: [], refreshed: [], corrected: null };
+  if (!claude) return result;
+  const guessed = typeof claude.guessedModels === "function" ? claude.guessedModels() : [];
+  result.guessed = guessed;
+  const guessedGlm = guessed.some((m) => /^glm-/.test(m));
+  let learned = false;
+  for (const [name, refresh, ttlMs] of [
+    ["claude", (o) => claude.refreshPricing(o), guessed.some((m) => !/^glm-/.test(m)) ? HOUR_MS : RATES_TTL_MS],
+    ["zai", refreshZai, guessedGlm ? HOUR_MS : RATES_TTL_MS],
+  ]) {
+    try {
+      const r = await refresh({ timeoutMs, ttlMs });
+      if (r && r.status) result.refreshed.push(`${name}:${r.status}`);
+      if (r && r.status === "updated") learned = true;
+    } catch {}
+  }
+  // A guess made this run may be priceable without any fetch: another process may already
+  // have learned the rate. Either way the correction only re-reads rows it can now price.
+  const nowPriced = typeof claude.pricedModel === "function" && guessed.some((m) => claude.pricedModel(m));
+  if (learned || nowPriced) {
+    try { result.corrected = await correct(claude); } catch {}
+  }
+  if (typeof claude.clearGuessedModels === "function") claude.clearGuessedModels();
+  return result;
+}
+
 async function main() {
   // One pass only enumerates the spool once, so an event that lands mid-drain is
   // left for the next worker. Loop until the spool is actually quiet — bounded,
@@ -418,8 +464,10 @@ async function main() {
   // machine has gone long enough without any scan, sweep anyway. Overlapping a
   // writer is safe: ingestTranscript abandons a pass whose transcript moved, and
   // claimScan keeps two sweeps off the same provider.
-  if (!shouldSweepNow()) return;
-  try { await sweepProviders(); } catch {}
+  if (shouldSweepNow()) {
+    try { await sweepProviders(); } catch {}
+  }
+  try { await refreshRatesAndCorrect(); } catch {}
 }
 
 const isDirect = process.argv[1]

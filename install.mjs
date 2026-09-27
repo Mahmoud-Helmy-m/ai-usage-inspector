@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import { getProvider, listProviders, detectInstalled } from "./src/providers/index.mjs";
 import { copyViewerSidecars, launcherName } from "./src/lib/ingest.mjs";
 import { recordInstall } from "./src/lib/scan-state.mjs";
+import { correctEstimatedCosts } from "./src/lib/estimates.mjs";
 
 const REPO = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
@@ -150,6 +151,13 @@ async function noteInstall(upgrading) {
     const r = await getProvider("claude").refreshPricing({ timeoutMs: 5_000 });
     if (r && ["updated", "unchanged", "not-modified", "fresh"].includes(r.status)) ok("rates    current Claude prices and context windows cached");
     else if (r) skip(`rates    could not fetch current Claude prices (${r.status}); using the built-in table`);
+  } catch {}
+  // Turns stored with a guessed price — a model newer than the rates this machine had — are
+  // priced again now that real rates may be known. Only those turns, re-read from their
+  // transcripts; a cost already priced from a real rate is never restated.
+  try {
+    const c = await correctEstimatedCosts(getProvider("claude"));
+    if (c.reread) ok(`prices   ${c.rows} estimated turn(s) re-priced at real rates`);
   } catch {}
 }
 

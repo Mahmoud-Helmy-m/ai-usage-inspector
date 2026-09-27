@@ -140,6 +140,23 @@ export function modelInfo(modelId) {
   return OVERRIDES[id] || TABLE[id] || FALLBACK;
 }
 
+/** Whether a model is priced from a real rate — Anthropic's, fetched, or z.ai's — rather than a guess. */
+export function pricedModel(modelId) {
+  return !modelInfo(modelId).estimated;
+}
+
+// Models this process had to price by guess, so the worker knows to refresh rates now rather
+// than at the next twelve-hourly refresh. Only ids that look like a model and only turns that
+// used tokens: Claude Code writes "<synthetic>" for messages no model produced.
+const GUESSED = new Set();
+const MODEL_ID = /^[a-z0-9][a-z0-9._-]*$/;
+export function guessedModels() {
+  return [...GUESSED];
+}
+export function clearGuessedModels() {
+  GUESSED.clear();
+}
+
 /** Context window (tokens) for a model id. */
 export function contextMax(modelId) {
   return modelInfo(modelId).contextMax;
@@ -171,6 +188,10 @@ export function costOf(modelId, usage) {
   const cacheRead = ((usage.cache_read_input_tokens || 0) * (r.cacheRead ?? r.input)) / M;
   const cacheWrite = (c5m * r.cacheWrite5m + c1h * r.cacheWrite1h) / M;
   const estimated = r.estimated || (r.cacheRead === null && (usage.cache_read_input_tokens || 0) > 0);
+  if (r.estimated && input + output + cacheRead + cacheWrite > 0) {
+    const id = normalize(String(modelId || "").trim().toLowerCase());
+    if (MODEL_ID.test(id) && id !== "unknown") GUESSED.add(id);
+  }
   return {
     input,
     output,

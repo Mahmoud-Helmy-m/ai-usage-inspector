@@ -6,7 +6,7 @@
 
 ![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-success)
-![Tests](https://img.shields.io/badge/tests-420-success)
+![Tests](https://img.shields.io/badge/tests-428-success)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
@@ -250,11 +250,14 @@ live in the OS temporary directory under a key derived from the canonical projec
 machine-local coordination file goes away when the server stops and is never stored in the project.
 
 The only thing written into an agent's own directory is its hook — listed in the table above,
-and removed by `--uninstall`. Your prompts and costs never leave your machine: the hook and
-sweep paths make no network calls at all. Pricing refresh fetches Anthropic's public
-pricing and models pages plus a second vendor pricing request to [z.ai](https://docs.z.ai/guides/overview/pricing) — when the dashboard starts, which `--no-pricing-refresh` turns off, and
-during `install` and `sync` at most twice a day. Set `AI_USAGE_NO_PRICING_REFRESH=1` to keep every
-command off the network.
+and removed by `--uninstall`. Your prompts and costs never leave your machine: nothing this tool
+sends anywhere contains them. The only network requests it makes are for public price lists —
+Anthropic's pricing and models pages and [z.ai's pricing page](https://docs.z.ai/guides/overview/pricing) —
+when the dashboard starts (`--no-pricing-refresh` turns that off), during `install` and `sync`, and
+from the background worker after it records turns: at most twice a day, or within the hour after a
+turn used a model the cached rates do not know yet. The hook itself never goes online; it hands
+off to the worker and returns. Set `AI_USAGE_NO_PRICING_REFRESH=1` to keep every part of the tool
+off the network.
 
 **Tracking is on by default and per project.** Turn it off, or strip whole field groups —
 `text` (the prompt and response themselves), `tokens`, `cost`, `context`, `timing`,
@@ -331,7 +334,7 @@ from — and that decides what a re-sync may do with it:
 |---|---|---|
 | `provider` | the agent itself (OpenCode, Cline / Roo / Kilo) | **always taken fresh** — it is the authority on its own number |
 | `priced` | this tool, from a rate table (Claude, Codex, Cursor with exact counts) | **kept as recorded** while the turn's tokens are unchanged |
-| `estimated` | this tool, but something in the number was a guess — token counts derived from text length (Cursor with no local counts), or a model with no listed rate, charged at its family default | **kept as recorded** while the turn's tokens are unchanged |
+| `estimated` | this tool, but something in the number was a guess — token counts derived from text length (Cursor with no local counts), or a model with no listed rate, charged at its family default | **priced again** once the model's real rate is known; otherwise kept as recorded |
 
 A cost this tool worked out is a fact about the rates on the day the turn ran, so re-importing
 history does not quietly restate it at today's rates — pass `--reprice` when you want that. The
@@ -341,14 +344,19 @@ The viewer clamps the displayed main-thread share to zero if older data has larg
 The promise covers rates, not tokens: when a re-read counts different tokens for a turn — an earlier
 capture was incomplete, or an older version gave them to the wrong turn — its cost is worked out
 again for the tokens really there. If a row is
-labelled `estimated` and you now know the real rate, `--relabel` refreshes the provenance and
-leaves the amount exactly as recorded. A turn
+labelled `estimated` because its model was newer than the rates this machine had, it is priced
+again automatically once the real rate is fetched: the worker, `sync` and `install` re-read just
+the transcripts behind those rows, so a turn that mixed models is still priced message by message.
+An estimate is a placeholder, not the rate on the day, so this restates only guesses that turned
+out wrong — never a cost that was priced. An estimate that happened to match the real amount keeps
+its label; `--relabel` refreshes that provenance and leaves the amount exactly as recorded. A turn
 mixing exact and estimated parts counts as estimated overall, so a guess is never shown as
 authoritative.
 
 Rates and context windows ship built-in and refresh best-effort from Anthropic's docs — every
 price column, cache reads included, and each current model's window — so a model released after
-your version still prices and measures correctly. The hook path never touches the network; it
+your version still prices and measures correctly — within the hour of first using it, because the
+worker refetches sooner when a turn had to guess. The hook path never touches the network; it
 reads what the last refresh cached. When a version corrects rates it had wrong for a model, the
 costs it stored for that model are worked out again once on upgrade; every other stored cost
 stands. See [pricing refresh](docs/internals.md#pricing-refresh), and

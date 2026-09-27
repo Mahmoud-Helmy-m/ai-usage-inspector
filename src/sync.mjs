@@ -22,6 +22,7 @@ import { getProvider, detectInstalled } from "./providers/index.mjs";
 import { ingestTranscript } from "./lib/ingest.mjs";
 import { markRepaired, repairDue, claimScan, recordScanResult } from "./lib/scan-state.mjs";
 import { backupCandidateStores, candidateStores, cleanUpCopies } from "./lib/copies.mjs";
+import { correctEstimatedCosts } from "./lib/estimates.mjs";
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -126,12 +127,27 @@ async function main() {
   // the last 12 hours; bounded, and never fatal. Claude only: the other
   // providers' refreshers take no timeout and refetch on every call, which a
   // sync run on every sweep must not wait on.
-  try { await refreshZaiPricing({ timeoutMs: 5_000 }); } catch {}
+  let ratesLearned = false;
+  try {
+    const z = await refreshZaiPricing({ timeoutMs: 5_000 });
+    if (z && z.status === "updated") ratesLearned = true;
+  } catch {}
   for (const p of providers) {
     if (p.id !== "claude" || typeof p.refreshPricing !== "function") continue;
     try {
       const r = await p.refreshPricing({ timeoutMs: 5_000 });
-      if (r && r.status === "updated") console.log(`  ${p.id}: rates and context windows updated from the provider's docs`);
+      if (r && r.status === "updated") {
+        ratesLearned = true;
+        console.log(`  ${p.id}: rates and context windows updated from the provider's docs`);
+      }
+    } catch {}
+  }
+  // New rates can price turns stored with a guessed one; re-read just those.
+  const claudeProvider = providers.find((p) => p.id === "claude");
+  if (ratesLearned && claudeProvider && process.env.AI_USAGE_RELABEL !== "1") {
+    try {
+      const c = await correctEstimatedCosts(claudeProvider);
+      if (c.reread) console.log(`  claude: ${c.rows} estimated turn(s) priced at real rates, from ${c.reread} transcript(s)`);
     } catch {}
   }
 

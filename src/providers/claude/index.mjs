@@ -15,6 +15,9 @@ import path from "node:path";
 import { HOME, encCwd } from "../../lib/paths.mjs";
 import { buildTurns as buildClaudeTurns, transcriptSnapshot } from "./transcript.mjs";
 import { applyRemoteRates, knownContextMax } from "./pricing.mjs";
+// What the estimate-correction pass needs to know: which models now have a real rate, and
+// which ones this process had to guess.
+export { pricedModel, guessedModels, clearGuessedModels } from "./pricing.mjs";
 import { ABORT, LockTimeoutError, mutateNdjson } from "../../lib/store.mjs";
 import { refreshPricing as refreshRemote } from "./remote-pricing.mjs";
 

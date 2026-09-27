@@ -261,6 +261,19 @@ function preserveComputedCost(next, previous, preserveRuns = true) {
       && typeof next.cost.supersedes === "number" && !(Number(previous.cost.rates) >= next.cost.supersedes)) {
     return next;
   }
+  // An estimate is a placeholder for a rate nobody knew yet, not what the turn cost at the time,
+  // so the promise to keep a computed cost does not cover a wrong one: once a re-read of the same
+  // tokens prices the whole turn from real rates at a different amount, that price is taken —
+  // runs included, as for a correction above. An estimate that happened to land on the real
+  // amount keeps its cautious label (see below; --relabel clears it), so a process that loaded
+  // the rates late cannot make the label flicker. --relabel never changes an amount, so it
+  // leaves this to a plain sync.
+  if (process.env.AI_USAGE_RELABEL !== "1"
+      && previous.cost.source === "estimated" && next.cost.source === "priced"
+      && !sameAmount(previous.cost, next.cost)
+      && previous.usage && next.usage && sameTokens(previous.usage, next.usage)) {
+    return next;
+  }
   const preserved = (cost = previous.cost) => {
     const out = { ...next, cost };
     return preserveRuns ? preserveRunCosts(out, previous) : out;
