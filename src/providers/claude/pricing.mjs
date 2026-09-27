@@ -13,7 +13,8 @@ import { readCachedRates, readCachedWindows } from "./remote-pricing.mjs";
 // a stored cost from before that revision is worked out again on the next read
 // instead of being kept. Stored costs are otherwise never rewritten — what a
 // turn cost at the time stands — but these were never Anthropic's prices.
-export const RATES_REVISION = 3;
+// Revision 4 changed no rate: it stopped a message with no tokens marking its turn estimated.
+export const RATES_REVISION = 4;
 const CORRECTED_IN = {
   // Missing from the table before revision 2. Without fetched rates they were
   // priced at the Opus-tier guess — Sonnet 5 2.5x too high, Fable and Mythos 5.1
@@ -187,7 +188,12 @@ export function costOf(modelId, usage) {
   const output = ((usage.output_tokens || 0) * r.output) / M;
   const cacheRead = ((usage.cache_read_input_tokens || 0) * (r.cacheRead ?? r.input)) / M;
   const cacheWrite = (c5m * r.cacheWrite5m + c1h * r.cacheWrite1h) / M;
-  const estimated = r.estimated || (r.cacheRead === null && (usage.cache_read_input_tokens || 0) > 0);
+  const tokens = (usage.input_tokens || 0) + (usage.output_tokens || 0)
+    + (usage.cache_read_input_tokens || 0) + c1h + c5m;
+  // No tokens cost nothing at any rate, so nothing about them is a guess — a "<synthetic>"
+  // message, which Claude Code writes for an API error or an interruption, marked its
+  // whole turn estimated before revision 4.
+  const estimated = (r.estimated && tokens > 0) || (r.cacheRead === null && (usage.cache_read_input_tokens || 0) > 0);
   if (r.estimated && input + output + cacheRead + cacheWrite > 0) {
     const id = normalize(String(modelId || "").trim().toLowerCase());
     if (MODEL_ID.test(id) && id !== "unknown") GUESSED.add(id);
@@ -201,6 +207,9 @@ export function costOf(modelId, usage) {
     source: estimated ? "estimated" : "priced",
     ...(estimated ? { estimatedRate: true } : {}),
     rates: RATES_REVISION,
+    // A stored cost from before revision 4 that holds such a message may carry that label
+    // wrongly; the store takes the new label when the amount is unchanged (see store.mjs).
+    ...(tokens === 0 ? { relabels: 4 } : {}),
     ...(isGlm(modelId) && zaiModelInfo(modelId) ? { supersedes: 3 } : {}),
     ...(CORRECTED_IN[normalize(modelId)] ? { supersedes: CORRECTED_IN[normalize(modelId)] } : {}),
   };

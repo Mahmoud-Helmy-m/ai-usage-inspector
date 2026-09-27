@@ -249,7 +249,7 @@ test("zai: revision and supersedes repair stale GLM exactly once", async (t) => 
   const file = path.join(temp(t), "rows.ndjson");
   const fresh = transcript(t, "glm-4.6");
   assert.equal(fresh.cost.rates, RATES_REVISION);
-  assert.equal(fresh.cost.rates, 3);
+  assert.ok(fresh.cost.rates >= 3, "at or after the revision that corrected GLM");
   assert.equal(fresh.cost.supersedes, 3);
   await upsertSession(file, "s", [{ ...fresh, cost: { total: 11.625, source: "estimated", rates: 2 } }]);
   await upsertSession(file, "s", [fresh]);
@@ -259,11 +259,11 @@ test("zai: revision and supersedes repair stale GLM exactly once", async (t) => 
   await upsertSession(file, "s", [{ ...fresh, cost: { ...fresh.cost, total: 2 } }]);
   assert.equal(read().cost.total, 1.26);
 });
-test("zai: upgrade through epoch 6 repairs GLM agents and epoch 7 adds Codex", async (t) => {
+test("zai: upgrade through epoch 6 repairs GLM agents and later epochs add Codex", async (t) => {
   const file = path.join(temp(t), "scan.json");
   const affected = ["claude", "cursor", "opencode", "cline", "roo", "kilo"];
   fs.writeFileSync(file, JSON.stringify({ installedRepairEpoch: 5, providers: {} }));
-  assert.equal(REPAIR_EPOCH, 7);
+  assert.equal(REPAIR_EPOCH, 8);
   await recordInstall({ file, upgrading: true, providerIds: [...affected, "codex", "future"] });
   for (const id of [...affected, "codex"]) assert.equal(repairDue(id, { file }), REPAIR_EPOCH, id);
   for (const id of ["future"]) assert.equal(repairDue(id, { file }), null, id);

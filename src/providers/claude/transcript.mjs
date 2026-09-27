@@ -224,7 +224,20 @@ function costFields(cost) {
     // worked out before it (see pricing.mjs, RATES_REVISION).
     ...(typeof cost.rates === "number" ? { rates: cost.rates } : {}),
     ...(typeof cost.supersedes === "number" ? { supersedes: cost.supersedes } : {}),
+    ...(typeof cost.relabels === "number" ? { relabels: cost.relabels } : {}),
   };
+}
+
+// The last message a model produced. Claude Code closes a turn that hit an API
+// error or was interrupted with a "<synthetic>" message: no model, no tokens.
+// Naming the turn after it, or measuring its context from it, would hide the
+// model that did the work and report the window empty.
+const SYNTHETIC = "<synthetic>";
+function lastReal(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i] && messages[i].model !== SYNTHETIC) return messages[i];
+  }
+  return messages[messages.length - 1];
 }
 
 // How full one thread's context window was: the whole input of its last request
@@ -232,7 +245,7 @@ function costFields(cost) {
 // separate conversations with windows of their own, so each is measured on its
 // own messages and never on another's.
 function contextOf(messages, fallbackModel) {
-  const last = messages[messages.length - 1];
+  const last = lastReal(messages);
   const model = (last && last.model) || fallbackModel || "unknown";
   const u = (last && last.usage) || {};
   const used = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
@@ -366,8 +379,8 @@ function runRecord(run, seen, messages) {
     description: run.meta.description || run.call.description || null,
     background: Boolean(run.call.run_in_background || run.result.isAsync),
     status: run.result.status || null,
-    model: (last && last.model) || run.result.resolvedModel || null,
-    vendor: vendorOf((last && last.model) || run.result.resolvedModel),
+    model: (lastReal(run.messages) || {}).model || run.result.resolvedModel || null,
+    vendor: vendorOf((lastReal(run.messages) || {}).model || run.result.resolvedModel),
     ts: run.ts,
     endTs,
     durationMs: run.ts && endTs ? Math.max(0, Date.parse(endTs) - Date.parse(run.ts)) : 0,
@@ -466,7 +479,8 @@ function finalizeTurn(t, opts, session) {
   }
 
   const last = main[main.length - 1];
-  const model = (last && last.model) || (e.message && e.message.model) || "unknown";
+  const real = lastReal(main);
+  const model = (real && real.model) || (e.message && e.message.model) || "unknown";
   // The turn's context is its main thread's alone; its runs report their own.
   const context = contextOf(main, model);
 
@@ -522,8 +536,8 @@ function finalizeTurn(t, opts, session) {
     responseChars: response.length,
     model,
     vendor: vendorOf(model),
-    serviceTier: (last && last.serviceTier) || null,
-    speed: (last && last.speed) || null,
+    serviceTier: (real && real.serviceTier) || null,
+    speed: (real && real.speed) || null,
     permissionMode: e.permissionMode || "default",
     effortLevel: opts.effortLevel || null,
     skills,

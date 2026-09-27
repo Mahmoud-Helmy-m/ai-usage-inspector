@@ -278,6 +278,15 @@ function preserveComputedCost(next, previous, preserveRuns = true) {
     const out = { ...next, cost };
     return preserveRuns ? preserveRunCosts(out, previous) : out;
   };
+  // A version that stopped labelling some part of a cost wrongly names its revision
+  // (`relabels`: a message with no tokens used to mark its turn estimated). A cost stored
+  // before that revision takes the new label, once, when the amount and tokens are the same;
+  // after that the stored cost carries the new revision and the ordinary rules apply.
+  if (typeof next.cost.relabels === "number" && !(Number(previous.cost.rates) >= next.cost.relabels)
+      && sameAmount(previous.cost, next.cost)
+      && previous.usage && next.usage && sameTokens(previous.usage, next.usage)) {
+    return preserved(next.cost);
+  }
   // The amount is preserved, but its provenance is not part of that promise: if
   // we now know the same number came from a guessed rate, say so. Without this a
   // row mislabelled by an older version stays mislabelled forever, because the

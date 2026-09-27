@@ -102,8 +102,12 @@ export function costOf(modelId, tokens, { long = false } = {}) {
   const input = (Math.max(0, tokens.input || 0) * r.input) / M;
   const cacheRead = (Math.max(0, tokens.cached || 0) * r.cachedInput) / M;
   const output = (Math.max(0, tokens.output || 0) * r.output) / M;
-  const guessedRate = !!r.estimated || (!!r.cachedGuessed && (tokens.cached || 0) > 0);
-  if (guessedRate && [tokens.input, tokens.cached, tokens.output].some((n) => n > 0)) {
+  const used = [tokens.input, tokens.cached, tokens.output].some((n) => n > 0);
+  // No tokens cost nothing at any rate: nothing about them is a guess. Before 2.11.1 such a
+  // turn could be labelled estimated; `relabels` lets the store drop that label while keeping
+  // the amount (Codex costs carry no rate revision, so any value works).
+  const guessedRate = (!!r.estimated && used) || (!!r.cachedGuessed && (tokens.cached || 0) > 0);
+  if (guessedRate && used) {
     const id = normalize(String(modelId || "").trim().toLowerCase());
     if (MODEL_ID.test(id) && id !== "unknown") GUESSED.add(id);
   }
@@ -116,5 +120,6 @@ export function costOf(modelId, tokens, { long = false } = {}) {
     total: input + cacheRead + output,
     source: guessedRate ? "estimated" : "priced",
     ...(guessedRate ? { estimatedRate: true } : {}),
+    ...(!used ? { relabels: 1 } : {}),
   };
 }

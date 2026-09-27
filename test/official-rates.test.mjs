@@ -286,12 +286,12 @@ test("Codex estimated rollout corrects exactly once; stores are found through pa
   assert.equal((await correctEstimatedCosts(provider)).priced, 0);
 });
 
-test("epoch 7 requests only Codex on upgrade from 6; repair preserves an already-priced amount", async (t) => {
+test("an upgrade from epoch 6 requests Codex and Claude, not Cursor; repair preserves an already-priced amount", async (t) => {
   const dir = temp(t), file = path.join(dir, "scan.json");
   fs.writeFileSync(file, JSON.stringify({ installedRepairEpoch: 6, providers: {} }));
   await recordInstall({ file, upgrading: true, providerIds: ["codex", "claude", "cursor"] });
-  assert.equal(repairDue("codex", { file }), 7);
-  assert.equal(repairDue("claude", { file }), null);
+  assert.equal(repairDue("codex", { file }), 8);
+  assert.equal(repairDue("claude", { file }), 8);
   assert.equal(repairDue("cursor", { file }), null);
   const row = rollout(path.join(dir, "r.jsonl"), dir, "gpt-5.5", [{ input: 300000, output: 1000 }]);
   const store = path.join(dir, "store.ndjson");

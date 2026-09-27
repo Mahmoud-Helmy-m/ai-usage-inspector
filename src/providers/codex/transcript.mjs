@@ -401,7 +401,8 @@ function finalizeTurn(t, ctx) {
     cost = addCost(cost, costOf(request.model, counts, { long: !!tier && request.input > tier.threshold }));
     for (const k of Object.keys(counts)) remaining[k] -= counts[k];
   }
-  if (Object.values(remaining).some((n) => n > 0)) cost = addCost(cost, costOf(model, remaining));
+  // A turn with no tokens at all is still priced once, so its cost says how it was labelled.
+  if (Object.values(remaining).some((n) => n > 0) || !t.requests.length) cost = addCost(cost, costOf(model, remaining));
 
   const ctxTokens = t.lastCtxInput || d.input;
   const ctxMax = t.ctxWindow || contextMax(model);
@@ -464,6 +465,7 @@ function finalizeTurn(t, ctx) {
       total: cost.total,
       source: cost.source || "priced",
       ...(cost.estimatedRate ? { estimatedRate: true } : {}),
+      ...(typeof cost.relabels === "number" ? { relabels: cost.relabels } : {}),
     },
     schema: 2,
   };

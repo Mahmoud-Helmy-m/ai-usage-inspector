@@ -28,7 +28,8 @@ export function addCost(a, b) {
   if (a.estimatedRate || b.estimatedRate) out.estimatedRate = true;
   // The rate-table revision the parts were worked out under, and the latest
   // revision that corrected any of their models' rates (see claude/pricing.mjs).
-  for (const key of ["rates", "supersedes"]) {
+  // `relabels`: the revision that stopped labelling a part like these wrongly (see store.mjs).
+  for (const key of ["rates", "supersedes", "relabels"]) {
     const values = [a[key], b[key]].filter((n) => typeof n === "number");
     if (values.length) out[key] = Math.max(...values);
   }

@@ -821,6 +821,25 @@ interface. A later ordinary scan uses the new prices; estimated token counts rem
 Finding the stores reads only the head of each transcript for the folder its first turn names —
 the rule `storeTurns` places rows by — or, pooled, every file in `AI_USAGE_DIR`.
 
+### Messages no model produced
+
+Claude Code closes a turn that hit an API error, or was interrupted, with an assistant message
+whose model is `<synthetic>` and whose usage is all zeros. Before 2.11.1 that message named the
+turn (and a subagent run ending the same way), its empty usage was taken as the turn's context,
+and — priced at the fallback — it marked the whole turn `estimated`, although every token in it
+was priced from a real rate. On the machine this was found on, 201 turns ($687.58) were listed
+under `<synthetic>` and 117 ($420.84) were marked estimated for that reason alone.
+
+- A turn's and a run's model, service tier, speed and context now come from the last message a
+  model produced; the end time still comes from the last message of any kind. A turn made only
+  of such messages keeps the name `<synthetic>`: it has no tokens and costs nothing.
+- No tokens are never a guess, for Claude or Codex: a part that used none is `priced`.
+- Such a cost carries `relabels` (Claude: rate revision 4; Codex costs carry no revision, so 1).
+  `preserveComputedCost` takes the new label when the stored cost is from before that revision
+  and the amount and tokens are the same — once, since the stored cost then carries revision 4.
+  A different amount is never restated. Repair epoch 8 re-reads Claude and Codex so stored rows
+  get the real model and label; rows whose transcripts are gone keep theirs.
+
 ## Known limits
 
 - **Codex long-context scope.** OpenAI's gpt-5.5 note says prompts above 272K are priced at
