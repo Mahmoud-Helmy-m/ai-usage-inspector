@@ -109,6 +109,7 @@ async function loadPricing(bundle, repo) {
   }
 }
 const PRICING = [
+  { label: "models.dev", mod: await loadPricing("./remote-pricing-modelsdev.mjs", "../src/lib/vendors/modelsdev/remote-pricing.mjs") },
   { label: "z.ai", mod: await loadPricing("./remote-pricing-zai.mjs", "../src/lib/vendors/zai/remote-pricing.mjs") },
   { label: "claude", mod: await loadPricing("./remote-pricing.mjs", "../src/providers/claude/remote-pricing.mjs") },
   { label: "openai", mod: await loadPricing("./remote-pricing-codex.mjs", "../src/providers/codex/remote-pricing.mjs") },
@@ -545,11 +546,11 @@ function autoSync() {
 // and content-diff the result — a cache and its log line only move when a rate
 // actually changed. Skipped when this project isn't tracking cost.
 // Non-blocking, best-effort, offline-safe.
-function refreshPricing() {
+async function refreshPricing() {
   if (!PRICING.length) return;
   if (!loadConfig().fields.cost) return;
   for (const { label, mod } of PRICING) {
-    mod
+    await mod
       .refreshPricing({ ttlMs: 0 })
       .then((r) => {
         if (r.status === "updated") {

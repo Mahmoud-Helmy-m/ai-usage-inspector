@@ -225,6 +225,7 @@ function costFields(cost) {
     ...(typeof cost.rates === "number" ? { rates: cost.rates } : {}),
     ...(typeof cost.supersedes === "number" ? { supersedes: cost.supersedes } : {}),
     ...(typeof cost.relabels === "number" ? { relabels: cost.relabels } : {}),
+    ...(cost.rateSource ? { rateSource: cost.rateSource } : {}),
   };
 }
 

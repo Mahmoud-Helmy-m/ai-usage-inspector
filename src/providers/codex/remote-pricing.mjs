@@ -6,6 +6,7 @@ import path from "node:path";
 
 export const PRICING_URL = "https://developers.openai.com/api/docs/pricing.md";
 export const MODELS_URL = "https://models.dev/api.json";
+const MODELS_CACHE_FILE = path.join(os.homedir(), ".ai-usage-inspector", "pricing-modelsdev.json");
 // OpenAI's documented long-context threshold when a row does not name one.
 export const LONG_CONTEXT_THRESHOLD = 272_000;
 
@@ -129,6 +130,7 @@ export function diffRates(oldRates, nextRates) {
 export async function refreshPricing({
   file = CACHE_FILE, url = PRICING_URL,
   modelsUrl = MODELS_URL,
+  modelsFile = MODELS_CACHE_FILE,
   ttlMs = 12 * 60 * 60 * 1000, retryMs = 60 * 60 * 1000, timeoutMs = 10_000,
   now = Date.now(),
   fetchImpl = process.env.AI_USAGE_NO_PRICING_REFRESH === "1" ? null : globalThis.fetch,
@@ -161,11 +163,22 @@ export async function refreshPricing({
   for (const r of Object.values(rates)) r.source = "openai";
   // A secondary failure never holds back official prices or replaces them.
   try {
-    const extra = await fetchImpl(modelsUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) });
-    if (extra.ok) {
-      for (const [id, rate] of Object.entries(parseModelsDev(await extra.json()))) {
-        if (!Object.hasOwn(rates, id)) rates[id] = { ...rate, source: "models.dev" };
-      }
+    let shared = null;
+    try { shared = JSON.parse(fs.readFileSync(modelsFile, "utf8")); } catch {}
+    let supplemental = {};
+    // Worker, sync, install and viewer refresh the shared cache first. Reusing it
+    // avoids a second 5 MB download, while standalone calls still work offline-safe.
+    if (shared?.rates && now - shared.fetchedAt < 12 * 60 * 60 * 1000) {
+      supplemental = Object.fromEntries(Object.entries(shared.rates.openai || {}).map(([id, r]) => [id, {
+        input: r.input, output: r.output, cachedInput: r.cacheRead ?? r.input * 0.1,
+        cachedGuessed: r.cacheRead == null, cacheWrite: r.cacheWrite, contextMax: r.contextMax,
+      }]));
+    } else {
+      const extra = await fetchImpl(modelsUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) });
+      if (extra.ok) supplemental = parseModelsDev(await extra.json());
+    }
+    for (const [id, rate] of Object.entries(supplemental)) {
+      if (!Object.hasOwn(rates, id)) rates[id] = { ...rate, source: "models.dev" };
     }
   } catch {}
   const changes = diffRates(cached?.rates, rates);

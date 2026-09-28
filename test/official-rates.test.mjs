@@ -290,8 +290,8 @@ test("an upgrade from epoch 6 requests Codex and Claude, not Cursor; repair pres
   const dir = temp(t), file = path.join(dir, "scan.json");
   fs.writeFileSync(file, JSON.stringify({ installedRepairEpoch: 6, providers: {} }));
   await recordInstall({ file, upgrading: true, providerIds: ["codex", "claude", "cursor"] });
-  assert.equal(repairDue("codex", { file }), 8);
-  assert.equal(repairDue("claude", { file }), 8);
+  assert.equal(repairDue("codex", { file }), 9);
+  assert.equal(repairDue("claude", { file }), 9);
   assert.equal(repairDue("cursor", { file }), null);
   const row = rollout(path.join(dir, "r.jsonl"), dir, "gpt-5.5", [{ input: 300000, output: 1000 }]);
   const store = path.join(dir, "store.ndjson");

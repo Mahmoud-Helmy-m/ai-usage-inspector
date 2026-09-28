@@ -17,6 +17,7 @@
 // Per-project tracking config still gates every project (disabled = skipped),
 // exactly like the hook path.
 import { refreshPricing as refreshZaiPricing } from "./lib/vendors/zai/pricing.mjs";
+import { refreshPricing as refreshModelsDevPricing } from "./lib/vendors/modelsdev/remote-pricing.mjs";
 import path from "node:path";
 import { getProvider, detectInstalled } from "./providers/index.mjs";
 import { ingestTranscript } from "./lib/ingest.mjs";
@@ -123,6 +124,8 @@ async function main() {
   // Refresh before parsing: twelve-hour ttl, bounded requests and failure backoff.
   let ratesLearned = false;
   try {
+    const m = await refreshModelsDevPricing({ timeoutMs: 5_000 });
+    if (m && m.status === "updated") ratesLearned = true;
     const z = await refreshZaiPricing({ timeoutMs: 5_000 });
     if (z && z.status === "updated") ratesLearned = true;
   } catch {}

@@ -263,7 +263,7 @@ test("zai: upgrade through epoch 6 repairs GLM agents and later epochs add Codex
   const file = path.join(temp(t), "scan.json");
   const affected = ["claude", "cursor", "opencode", "cline", "roo", "kilo"];
   fs.writeFileSync(file, JSON.stringify({ installedRepairEpoch: 5, providers: {} }));
-  assert.equal(REPAIR_EPOCH, 8);
+  assert.equal(REPAIR_EPOCH, 9);
   await recordInstall({ file, upgrading: true, providerIds: [...affected, "codex", "future"] });
   for (const id of [...affected, "codex"]) assert.equal(repairDue(id, { file }), REPAIR_EPOCH, id);
   for (const id of ["future"]) assert.equal(repairDue(id, { file }), null, id);

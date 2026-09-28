@@ -24,11 +24,12 @@ export const SCAN_STATUSES = new Set(["ok", "locked", "unsupported-schema", "mis
 // 7: Codex official Standard rates and per-request long-context pricing (2.11.0).
 // 8: Claude turns ending in a "<synthetic>" message take the real model, and turns with
 //    no-token parts lose a wrong "estimated" label (2.11.1).
-export const REPAIR_EPOCH = 8;
+// 9: Claude fast messages were incorrectly priced at standard rates.
+export const REPAIR_EPOCH = 9;
 
 // Which agents' stored rows each epoch's changes touch. Epochs before this map
 // existed touched every provider, so a missing entry repairs them all.
-const REPAIR_PROVIDERS_BY_EPOCH = Object.freeze({ 4: ["opencode"], 5: ["opencode", "cline", "roo", "kilo"], 6: ["claude", "opencode", "cline", "roo", "kilo", "cursor"], 7: ["codex"], 8: ["claude", "codex"] });
+const REPAIR_PROVIDERS_BY_EPOCH = Object.freeze({ 4: ["opencode"], 5: ["opencode", "cline", "roo", "kilo"], 6: ["claude", "opencode", "cline", "roo", "kilo", "cursor"], 7: ["codex"], 8: ["claude", "codex"], 9: ["claude"] });
 
 // A repair covers the rows one destination holds: each project's own files, or
 // the pooled copy in an aggregate AI_USAGE_DIR. Settling one says nothing about

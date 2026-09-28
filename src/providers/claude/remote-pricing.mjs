@@ -70,9 +70,22 @@ function parsePrice(cell) {
 // tables, and currently effective pricing is listed before any future price.
 export function parsePricingMarkdown(md) {
   const rates = {};
+  const fastRates = {};
+  let fast = false;
   for (const line of String(md || "").split("\n")) {
+    if (/^#{1,3}\s/.test(line)) fast = /^###\s+Fast mode pricing\s*$/i.test(line);
     if (line[0] !== "|") continue;
     const cells = line.split("|").map((c) => c.trim());
+    if (fast) {
+      const input = parsePrice(cells[2]), output = parsePrice(cells[3]);
+      if (input === null || output === null) continue;
+      for (const name of cells[1].split(/\s+\/\s+/)) {
+        const id = nameToId(name);
+        if (id && !fastRates[id]) fastRates[id] = { input, output };
+      }
+      continue;
+    }
+    if (cells[1].includes(" / ")) continue;
     const id = nameToId(cells[1]);
     if (!id || id in rates) continue;
     const prices = cells.slice(2).map(parsePrice).filter((n) => n != null);
@@ -85,6 +98,9 @@ export function parsePricingMarkdown(md) {
       [rate.cacheWrite5m, rate.cacheWrite1h, rate.cacheRead] = prices.slice(1, 4);
     }
     rates[id] = rate;
+  }
+  for (const [id, rate] of Object.entries(fastRates)) {
+    if (rates[id]) rates[id].fast = rate;
   }
   return rates;
 }
@@ -173,7 +189,7 @@ export function diffRates(oldRates, nextRates) {
     const y = b[id];
     if (!y) changes.push({ id, type: "removed", from: x });
     else if (!x) changes.push({ id, type: "added", to: y });
-    else if (PRICE_FIELDS.some((k) => x[k] !== y[k]))
+    else if (PRICE_FIELDS.some((k) => x[k] !== y[k]) || ["input", "output"].some((k) => x.fast?.[k] !== y.fast?.[k]))
       changes.push({ id, type: "changed", from: x, to: y });
   }
   return changes;

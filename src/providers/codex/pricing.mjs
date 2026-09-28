@@ -2,6 +2,7 @@
 // Source: developers.openai.com/api/docs/pricing.md; cached rates override this table.
 import { M, zeroCost } from "../../lib/pricing-core.mjs";
 import { readCachedRates, LONG_CONTEXT_THRESHOLD } from "./remote-pricing.mjs";
+import { lookup, providerForId } from "../../lib/vendors/modelsdev/pricing.mjs";
 
 export { zeroCost };
 
@@ -39,7 +40,7 @@ const FALLBACK = { ...model(1.75, 0.175, 14, 400_000), estimated: true };
 let OVERRIDES = {};
 const price = (n) => typeof n === "number" && Number.isFinite(n) && n >= 0;
 const GUESSED = new Set();
-const MODEL_ID = /^[a-z0-9][a-z0-9._-]*$/;
+const MODEL_ID = /^[a-z0-9][a-z0-9._/@:-]*$/;
 export function guessedModels() { return [...GUESSED]; }
 export function clearGuessedModels() { GUESSED.clear(); }
 export function pricedModel(modelId) {
@@ -60,6 +61,7 @@ export function applyRemoteRates(rates) {
         : (TABLE[id] && TABLE[id].contextMax) || FALLBACK.contextMax;
     const long = r.long && ["input", "cachedInput", "output", "threshold"].every((k) => price(r.long[k])) ? { ...r.long } : null;
     OVERRIDES[id] = { ...model(r.input, cached, r.output, ctx, r.cacheWrite ?? null, long), cachedGuessed: !cachedKnown };
+    if (r.source === "models.dev") OVERRIDES[id].rateSource = "models.dev";
   }
 }
 
@@ -81,7 +83,17 @@ export function knownModel(modelId) {
 
 export function modelInfo(modelId) {
   const id = normalize(modelId);
-  return OVERRIDES[id] || TABLE[id] || FALLBACK;
+  const override = OVERRIDES[id];
+  if (override && override.rateSource !== "models.dev") return override;
+  if (TABLE[id]) return TABLE[id];
+  // A shared refresh may fill a missing cache price even when OpenAI returns 304
+  // and its supplemental copy is unchanged. Observe that price before the old copy.
+  const extra = lookup(modelId) || lookup(modelId, ["openai"]) || lookup(id, ["openai"]);
+  if (extra?.provider === "openai") return { ...extra,
+    cachedInput: extra.cacheRead ?? extra.input * 0.1, cachedGuessed: extra.cacheRead == null };
+  // Another lab's model: a missing cache-hit price bills hits at input, flagged as a guess.
+  return extra ? { ...extra, cachedInput: extra.cacheRead ?? extra.input, cachedGuessed: extra.cacheRead == null }
+    : override || FALLBACK;
 }
 
 export function contextMax(modelId) {
@@ -95,7 +107,8 @@ export function contextMax(modelId) {
  *   output — output tokens (already includes reasoning tokens)
  * Returns the shared cost object { input, output, cacheRead, cacheWrite, total }.
  */
-export function costOf(modelId, tokens, { long = false } = {}) {
+export function costOf(modelId, tokens, { long = false, modelProvider = null } = {}) {
+  if (["ollama", "lmstudio", "oss"].includes(modelProvider)) return { ...zeroCost(), source: "priced", rateSource: "local" };
   if (!tokens) return { ...zeroCost(), source: "priced" };
   const info = modelInfo(modelId);
   const r = long && info.long ? info.long : info;
@@ -108,7 +121,8 @@ export function costOf(modelId, tokens, { long = false } = {}) {
   // the amount (Codex costs carry no rate revision, so any value works).
   const guessedRate = (!!r.estimated && used) || (!!r.cachedGuessed && (tokens.cached || 0) > 0);
   if (guessedRate && used) {
-    const id = normalize(String(modelId || "").trim().toLowerCase());
+    const raw = String(modelId || "").trim().toLowerCase();
+    const id = providerForId(raw) ? raw : normalize(raw);
     if (MODEL_ID.test(id) && id !== "unknown") GUESSED.add(id);
   }
   return {
@@ -120,6 +134,7 @@ export function costOf(modelId, tokens, { long = false } = {}) {
     total: input + cacheRead + output,
     source: guessedRate ? "estimated" : "priced",
     ...(guessedRate ? { estimatedRate: true } : {}),
+    ...(info.rateSource ? { rateSource: info.rateSource } : {}),
     ...(!used ? { relabels: 1 } : {}),
   };
 }

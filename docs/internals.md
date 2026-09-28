@@ -537,6 +537,7 @@ them:
 | z.ai | [Published pricing](https://docs.z.ai/guides/overview/pricing.md) | `~/.ai-usage-inspector/pricing-zai.json` |
 | OpenAI | [Official Standard pricing](https://developers.openai.com/api/docs/pricing.md); [models.dev](https://models.dev/api.json) only for missing ids | `~/.ai-usage-inspector/pricing-codex.json` |
 | Cursor | Cursor's [models & pricing](https://cursor.com/docs/models-and-pricing.md) docs | `~/.ai-usage-inspector/pricing-cursor.json` |
+| Other labs and platforms | [models.dev](https://models.dev/api.json), a community dataset | `~/.ai-usage-inspector/pricing-modelsdev.json` |
 | OpenCode | none needed — it stores its own cost per message | — |
 
 The dashboard requests a refresh with ttl 0 at every start and
@@ -556,12 +557,61 @@ window" rows by column. A model released after this version is priced and measur
 the first time the cache refreshes. The models page failing never holds back a rate refresh, and
 the windows already known are kept.
 
-`install`, `sync` and the background worker refresh Claude, Codex, Cursor and z.ai with a
+Claude's `### Fast mode pricing` table is stored separately as `rates[id].fast` input/output
+prices; a cell naming several models with ` / ` supplies each id. Fast rows cannot overwrite
+standard rates. For `usage.speed === "fast"`, input and output use those prices and all three
+cache prices scale by fast input / standard input. This keeps Opus 5.5's 0.05x cache-hit ratio.
+Bundled fast rates are Opus 5.5 8/40 and Opus 5 / 4.8 10/50 USD per MTok. A missing fast rate
+uses standard prices labelled estimated; Opus 4.6 carries `fastStandard: true` because its fast
+requests run and bill at standard speed. Fast-priced messages carry `supersedes: 5` and
+`rates: 5`; revision 5 and Claude-only repair epoch 9 correct the former standard-priced fast
+messages. Standard-speed costs receive no revision-5 supersedes stamp.
+
+Bedrock ids (regional prefixes followed by `anthropic.claude-`) first look for an exact entry
+under `amazon-bedrock`. Vertex `claude-...@YYYYMMDD` ids try `google-vertex-anthropic`, then
+`google-vertex`. These prices include the platform's published uplift. Otherwise normalization
+strips `us.`, `eu.`, `apac.`, `jp.`, `au.`, `global.` or `us-gov.`, then `anthropic.`, version
+suffixes (`-vN` or `-vN:N`) and date suffixes (`@YYYYMMDD` or `-YYYYMMDD`). The Anthropic
+table supplies the fallback price and context window. Vendor stays `anthropic`. Platform ids
+never receive fast pricing, which is first-party Claude API only.
+
+The shared models.dev refresher retains only lab providers `anthropic`, `openai`, `moonshotai`,
+`deepseek`, `alibaba`, `minimax`, `xai`, `google`, `mistral`, `cohere`, `llama`, `zai`, plus
+`amazon-bedrock`, `google-vertex`, `google-vertex-anthropic` and `openrouter`. It stores only
+input/output, cache-read/write prices and context windows, rejecting negative or nonnumeric
+prices. Coding plans and resellers are excluded even when they list the same model for $0.
+Fewer than three valid models, or fewer than half the previous count, is `parse-thin` and keeps
+the old cache. The refresher has the same TTL, backoff, ETag, offline flag and statuses as the
+other refreshers, and is a self-contained viewer sidecar.
+
+For models outside the agent's official table, one shared family map chooses a provider:
+`kimi` → `moonshotai`; `deepseek` → `deepseek`; `qwen` / `qwq` → `alibaba`; `minimax` → `minimax`;
+`grok` → `xai`; `gemini` → `google`; `mistral` / `devstral` / `codestral` / `magistral` → `mistral`;
+`command` → `cohere`; `llama` → `llama`. An id containing `/` requires its exact `openrouter`
+entry. Id matching is case-insensitive; no match keeps the estimated fallback. GLM retains its
+z.ai handling. Costs from this cache are `priced` and carry `rateSource: "models.dev"` through
+message aggregation and stored rows. Vendor identifies the lab, and `limit.context` fills a
+missing agent context window. A lab that publishes no cache-hit price has hits billed at its
+input price and labelled `estimated`, since that is a guess. Claude on Bedrock or Vertex keeps
+Anthropic's cache multipliers (5-minute write 1.25x, 1-hour write 2x, the model's own hit ratio)
+on the platform's input price: models.dev lists a single write price, which would bill 1-hour
+writes as 5-minute ones.
+
+Codex `session_meta.model_provider` values `ollama`, `lmstudio` and `oss` instead produce zero
+cost, `source: "priced"`, `rateSource: "local"`, without recording a guess. Other provider names
+use model lookup. Aggregation retains models.dev provenance if any part uses it; otherwise it
+retains local provenance when present.
+
+`install`, `sync` and the background worker refresh Claude, Codex, Cursor, z.ai and models.dev with a
 12-hour ttl and a 5-second timeout per request. A worker that guessed a model shortens that
-provider's ttl to one hour; a GLM guess from any provider shortens z.ai's ttl. Failed attempts
+provider's ttl to one hour; a GLM guess from any provider shortens z.ai's ttl. `unpriced.json`
+records `<agent>:<model-id>` timestamps after a successful check (`fresh`, `updated`, `unchanged`
+or `not-modified`) still found no price. For twelve hours those ids no longer shorten the TTL;
+new ids still do. Repeated fresh runs do not slide that timestamp forward. File failures are
+harmless, and this file is excluded from the `pricing-*.json` correction fingerprint. Failed attempts
 back off for one hour (capped by the ttl, so dashboard starts still try). ETags allow 304 replies.
 `AI_USAGE_NO_PRICING_REFRESH=1` disables all pricing requests; tests inject fetch implementations.
-Only public documentation is requested: no prompts, tokens or costs are sent.
+Only public price data is requested: no prompts, tokens or costs are sent.
 
 Codex parses only `### Standard pricing data` from OpenAI's markdown: Batch, Flex and Fast
 prices are ignored. Short and long input, cached input, cache-write and output prices are kept.
@@ -574,6 +624,9 @@ ignored for costing. Rollouts provide no cache-write counts, so that cost stays 
 After a successful official parse, models.dev fills only missing ids; each cached model records
 `source: "openai"` or `"models.dev"`. Official failure preserves the cache; secondary failure
 still permits official prices. Fewer than three official models is `parse-thin`.
+Worker, sync, install and viewer refresh the shared models.dev cache before Codex, which reuses
+its OpenAI entries while it is under twelve hours old. A standalone Codex refresh without that
+fresh cache retains its secondary fetch. Both remote modules remain self-contained.
 
 Cursor keeps its `Accept: text/plain, */*` header: some Accept values that list `text/markdown` got
 404 responses in testing (2026-09). It stores the published cache-write column, but its transcript parser reads only
@@ -694,7 +747,7 @@ message and no dashboard opens (the Windows shim pauses on that error).
 
 A project gets `viewer/` and nothing else — no `src/` tree beside it — so the modules the bundled
 server imports are copied in next to it, under the names it looks for: `config.mjs`, `store.mjs`, and
-the three per-provider pricing refreshers and the shared z.ai vendor refresher. `VIEWER_SIDECARS` in `src/lib/ingest.mjs` is that list, and
+the three per-provider pricing refreshers and the shared z.ai and models.dev refreshers. `VIEWER_SIDECARS` in `src/lib/ingest.mjs` is that list, and
 both the installer (building the app) and `ensureBundle` (writing a project's copy) use it, so a
 bundle cannot be missing a module because of which tree wrote it. A sweep run straight from a
 checkout used to produce bundles that died on an import before they could listen.
@@ -850,6 +903,14 @@ under `<synthetic>` and 117 ($420.84) were marked estimated for that reason alon
   get the real model and label; rows whose transcripts are gone keep theirs.
 
 ## Known limits
+
+- **Codex Fast tier.** Rollouts do not record the service tier in `turn_context`, so costs use
+  OpenAI Standard prices even when the request may have used Fast.
+- **Regional Bedrock uplift.** Without an exact models.dev platform entry, a regional Bedrock
+  id uses Anthropic's price and may omit a regional uplift. No multiplier is guessed.
+- **models.dev context tiers.** Community `cost.tiers` prices are not applied; costs use the base tier.
+- **Local models through Claude Code.** Its transcript does not identify local execution reliably,
+  so a locally served model cannot automatically be assigned zero cost. Codex records its provider.
 
 - **Codex long-context scope.** OpenAI's gpt-5.5 note says prompts above 272K are priced at
   2x input and 1.5x output for the full session. Here the threshold applies per request as

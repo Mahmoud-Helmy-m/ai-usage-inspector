@@ -7,6 +7,7 @@
 import { isGlm, modelInfo as zaiModelInfo } from "../../lib/vendors/zai/pricing.mjs";
 import { M, zeroCost, addCost } from "../../lib/pricing-core.mjs";
 import { readCachedRates, readCachedWindows } from "./remote-pricing.mjs";
+import { lookup, platformOf, anthropicId } from "../../lib/vendors/modelsdev/pricing.mjs";
 
 // Which version of this table a cost was worked out under. Costs carry it, so a
 // correction can name the models it corrected and the revision it arrived in:
@@ -14,7 +15,8 @@ import { readCachedRates, readCachedWindows } from "./remote-pricing.mjs";
 // instead of being kept. Stored costs are otherwise never rewritten — what a
 // turn cost at the time stands — but these were never Anthropic's prices.
 // Revision 4 changed no rate: it stopped a message with no tokens marking its turn estimated.
-export const RATES_REVISION = 4;
+// Revision 5 corrects fast messages previously billed at standard rates.
+export const RATES_REVISION = 5;
 const CORRECTED_IN = {
   // Missing from the table before revision 2. Without fetched rates they were
   // priced at the Opus-tier guess — Sonnet 5 2.5x too high, Fable and Mythos 5.1
@@ -34,7 +36,7 @@ export { zeroCost, addCost };
 // `windowKnown` says whether contextMax is the model's real window or a guess.
 // It is separate from `estimated`, which is about the rate: a model can have a
 // fetched price and no known window, or a fetched window and a guessed price.
-function model(input, output, ctx, { cacheWrite5m, cacheWrite1h, cacheRead } = {}, windowKnown = true) {
+function model(input, output, ctx, { cacheWrite5m, cacheWrite1h, cacheRead, fast, fastStandard } = {}, windowKnown = true) {
   return {
     input,
     output,
@@ -43,22 +45,26 @@ function model(input, output, ctx, { cacheWrite5m, cacheWrite1h, cacheRead } = {
     cacheRead: cacheRead ?? input * 0.1,
     contextMax: ctx,
     windowKnown,
+    ...(fast ? { fast } : {}),
+    ...(fastStandard ? { fastStandard } : {}),
   };
 }
 
 // Keyed by normalized model id (date suffix stripped, see normalize()).
-// Figures from Anthropic's pricing and models pages, checked 2026-09-16.
+// Figures from Anthropic's pricing and models pages; fast rates checked 2026-09-28.
 const TABLE = {
   "claude-fable-5-1": model(10, 50, 1_000_000, { cacheRead: 0.25 }),
   "claude-mythos-5-1": model(10, 50, 1_000_000, { cacheRead: 0.25 }),
   "claude-fable-5": model(10, 50, 1_000_000),
   "claude-mythos-5": model(10, 50, 1_000_000),
-  "claude-opus-5": model(5, 25, 1_000_000),
+  "claude-opus-5-5": model(4, 20, 1_000_000, { cacheRead: 0.2, fast: { input: 8, output: 40 } }),
+  "claude-opus-5": model(5, 25, 1_000_000, { fast: { input: 10, output: 50 } }),
   "claude-sonnet-5": model(2, 10, 1_000_000),
-  "claude-opus-4-8": model(5, 25, 1_000_000),
+  "claude-opus-4-8": model(5, 25, 1_000_000, { fast: { input: 10, output: 50 } }),
   "claude-opus-4-7": model(5, 25, 1_000_000),
-  "claude-opus-4-6": model(5, 25, 1_000_000),
+  "claude-opus-4-6": model(5, 25, 1_000_000, { fastStandard: true }),
   "claude-opus-4-5": model(5, 25, 200_000),
+  "claude-opus-4-1": model(15, 75, 200_000),
   "claude-sonnet-4-6": model(3, 15, 1_000_000),
   "claude-sonnet-4-5": model(3, 15, 200_000),
   "claude-haiku-4-5": model(1, 5, 200_000),
@@ -109,6 +115,9 @@ export function applyRemoteRates(rates, windows) {
           : known && known.input > 0 ? fetched.input * (known[key] / known.input) : undefined;
       }
       OVERRIDES[id] = model(fetched.input, fetched.output, ctx, cache, windowKnown);
+      if (price(fetched.fast?.input) && price(fetched.fast?.output)) OVERRIDES[id].fast = { ...fetched.fast };
+      else if (known?.fast) OVERRIDES[id].fast = known.fast;
+      if (known?.fastStandard) OVERRIDES[id].fastStandard = true;
     } else {
       // A window without a price: whatever rates are already known — an earlier
       // fetch, the built-in entry, or still the guess — with the window now known.
@@ -123,9 +132,9 @@ try {
   applyRemoteRates(readCachedRates(), readCachedWindows());
 } catch {}
 
-/** Strip a trailing -YYYYMMDD date snapshot from a model id. */
+/** Platform aliases share Anthropic's windows and fallback rates. */
 export function normalize(modelId) {
-  return String(modelId || "").replace(/-\d{8}$/, "");
+  return anthropicId(modelId);
 }
 
 /** Whether the Anthropic table or its fetched overrides know this model. */
@@ -138,6 +147,24 @@ export function modelInfo(modelId) {
   // Unknown GLM keeps the provider's explicit estimated fallback, never its window guess.
   if (isGlm(modelId)) return zaiModelInfo(modelId) || { ...FALLBACK, contextMax: null };
   const id = normalize(modelId);
+  const platform = platformOf(modelId);
+  const extra = platform || !id.startsWith("claude-") ? lookup(modelId) : null;
+  if (extra) {
+    const standard = OVERRIDES[id] || TABLE[id];
+    // Claude on Bedrock or Vertex keeps Anthropic's cache multipliers (5m write 1.25x, 1h write
+    // 2x, the model's own hit ratio) on the platform's input price; models.dev lists only one
+    // write price, which would bill 1h writes as 5m ones. Other vendors' models use what the
+    // lab publishes; a missing cache-hit price stays null, so hits are billed at input and
+    // labelled estimated rather than passed off as looked up.
+    if (platform && standard && standard.input > 0) {
+      const scale = extra.input / standard.input;
+      return { ...extra, cacheWrite5m: standard.cacheWrite5m * scale, cacheWrite1h: standard.cacheWrite1h * scale,
+        cacheRead: standard.cacheRead * scale, contextMax: standard.contextMax, windowKnown: !!standard.windowKnown };
+    }
+    return { ...extra, cacheWrite5m: extra.cacheWrite ?? extra.input,
+      cacheWrite1h: extra.cacheWrite ?? extra.input, cacheRead: extra.cacheRead ?? null,
+      ...(platform ? { contextMax: standard?.contextMax || null, windowKnown: !!standard?.windowKnown } : {}) };
+  }
   return OVERRIDES[id] || TABLE[id] || FALLBACK;
 }
 
@@ -150,7 +177,7 @@ export function pricedModel(modelId) {
 // than at the next twelve-hourly refresh. Only ids that look like a model and only turns that
 // used tokens: Claude Code writes "<synthetic>" for messages no model produced.
 const GUESSED = new Set();
-const MODEL_ID = /^[a-z0-9][a-z0-9._-]*$/;
+const MODEL_ID = /^[a-z0-9][a-z0-9._/@:-]*$/;
 export function guessedModels() {
   return [...GUESSED];
 }
@@ -175,7 +202,15 @@ export function knownContextMax(modelId) {
  */
 export function costOf(modelId, usage) {
   if (!usage) return { ...zeroCost(), source: "priced" };
-  const r = modelInfo(modelId);
+  let r = modelInfo(modelId);
+  const fast = usage.speed === "fast" && !platformOf(modelId);
+  const fastPriced = fast && r.fast && r.input > 0;
+  if (fastPriced) {
+    // Preserve each model's published cache ratios, including Opus 5.5's 0.05x hit.
+    const scale = r.fast.input / r.input;
+    r = { ...r, ...r.fast, cacheWrite5m: r.cacheWrite5m * scale,
+      cacheWrite1h: r.cacheWrite1h * scale, cacheRead: r.cacheRead * scale };
+  } else if (fast && !r.fastStandard) r = { ...r, estimated: true };
   const cc = usage.cache_creation || {};
   // If no breakdown, treat all cache_creation as 5m (the common case).
   const c1h = cc.ephemeral_1h_input_tokens || 0;
@@ -195,7 +230,8 @@ export function costOf(modelId, usage) {
   // whole turn estimated before revision 4.
   const estimated = (r.estimated && tokens > 0) || (r.cacheRead === null && (usage.cache_read_input_tokens || 0) > 0);
   if (r.estimated && input + output + cacheRead + cacheWrite > 0) {
-    const id = normalize(String(modelId || "").trim().toLowerCase());
+    const raw = String(modelId || "").trim().toLowerCase();
+    const id = !platformOf(raw) && raw.startsWith("claude-") ? normalize(raw) : raw;
     if (MODEL_ID.test(id) && id !== "unknown") GUESSED.add(id);
   }
   return {
@@ -206,11 +242,13 @@ export function costOf(modelId, usage) {
     total: input + output + cacheRead + cacheWrite,
     source: estimated ? "estimated" : "priced",
     ...(estimated ? { estimatedRate: true } : {}),
+    ...(r.rateSource ? { rateSource: r.rateSource } : {}),
     rates: RATES_REVISION,
     // A stored cost from before revision 4 that holds such a message may carry that label
     // wrongly; the store takes the new label when the amount is unchanged (see store.mjs).
     ...(tokens === 0 ? { relabels: 4 } : {}),
     ...(isGlm(modelId) && zaiModelInfo(modelId) ? { supersedes: 3 } : {}),
     ...(CORRECTED_IN[normalize(modelId)] ? { supersedes: CORRECTED_IN[normalize(modelId)] } : {}),
+    ...(fastPriced ? { supersedes: 5 } : {}),
   };
 }

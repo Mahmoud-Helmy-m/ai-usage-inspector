@@ -11,6 +11,9 @@ import { scanWindow, recordScanResult, claimScan, readScanState } from "./lib/sc
 import { backupCandidateStores, candidateStores, cleanUpCopies } from "./lib/copies.mjs";
 import { correctEstimatedCosts, correctAll, ratesChangedSinceCorrection } from "./lib/estimates.mjs";
 import { refreshPricing as refreshZaiPricing } from "./lib/vendors/zai/pricing.mjs";
+import { refreshPricing as refreshModelsDevPricing } from "./lib/vendors/modelsdev/remote-pricing.mjs";
+import { providerForId } from "./lib/vendors/modelsdev/pricing.mjs";
+import { UNPRICED_FILE, readUnpriced, writeUnpriced } from "./lib/unpriced.mjs";
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -423,6 +426,9 @@ export async function refreshRatesAndCorrect({
   providers = detectInstalled(),
   refreshers = {},
   refreshZai = refreshZaiPricing,
+  refreshModelsDev = refreshModelsDevPricing,
+  unpricedFile = UNPRICED_FILE,
+  now = Date.now(),
   correct = correctEstimatedCosts,
   ratesChanged = ratesChangedSinceCorrection,
   timeoutMs = 5_000,
@@ -433,21 +439,42 @@ export async function refreshRatesAndCorrect({
     try { guesses.set(provider, provider.guessedModels?.() || []); } catch { guesses.set(provider, []); }
   }
   result.guessed = [...guesses.values()].flat();
-  const guessedGlm = result.guessed.some((m) => /^glm-/i.test(m));
+  const unpriced = readUnpriced(unpricedFile);
+  const keyOf = (provider, id) => `${provider.id}:${id.toLowerCase()}`;
+  const needsCheck = (provider, id) => {
+    const at = unpriced[keyOf(provider, id)];
+    return !Number.isFinite(at) || now < at || now - at >= RATES_TTL_MS;
+  };
+  const freshGuesses = [...guesses].flatMap(([p, ids]) => ids.filter((id) => needsCheck(p, id)));
+  const guessedGlm = freshGuesses.some((m) => /^glm-/i.test(m));
+  const statuses = {};
   let learned = false;
   const refresh = async (name, fn, guessed) => {
     try {
-      const r = await fn({ timeoutMs, ttlMs: guessed ? HOUR_MS : RATES_TTL_MS });
+      const r = await fn({ timeoutMs, ttlMs: guessed ? HOUR_MS : RATES_TTL_MS, now });
+      statuses[name] = r?.status;
       if (r?.status) result.refreshed.push(`${name}:${r.status}`);
       if (r?.status === "updated") learned = true;
     } catch {}
   };
+  if (guesses.size) await refresh("modelsdev", refreshers.modelsdev || refreshModelsDev, freshGuesses.length > 0);
   for (const [provider, guessed] of guesses) {
     if (!["claude", "codex", "cursor"].includes(provider.id)) continue;
     await refresh(provider.id, refreshers[provider.id] || ((o) => provider.refreshPricing(o)),
-      guessed.some((m) => provider.id !== "claude" || !/^glm-/i.test(m)));
+      guessed.some((m) => needsCheck(provider, m) && (provider.id !== "claude" || !/^glm-/i.test(m))));
   }
   if (guesses.size) await refresh("zai", refreshers.zai || refreshZai, guessedGlm);
+  const completed = new Set(["fresh", "updated", "unchanged", "not-modified"]);
+  for (const [provider, ids] of guesses) {
+    for (const id of ids) {
+      try {
+        const source = /^glm-/i.test(id) ? "zai" : providerForId(id) ? "modelsdev" : provider.id;
+        if (provider.pricedModel?.(id)) delete unpriced[keyOf(provider, id)];
+        else if (needsCheck(provider, id) && completed.has(statuses[source])) unpriced[keyOf(provider, id)] = now;
+      } catch {}
+    }
+  }
+  writeUnpriced(unpriced, unpricedFile);
   // Rates another process fetched count as much as ours: the dashboard refetches on every start
   // and corrects nothing, and after it this run finds the cache fresh.
   let changed = false;

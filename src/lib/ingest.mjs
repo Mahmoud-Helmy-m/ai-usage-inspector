@@ -31,7 +31,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 35: model vendor filter, prompt detail metadata and CSV column.
 // 36: the Codex price sidecar reads OpenAI's official page into a new cache schema; an older
 //     copy would keep rewriting that cache in the old one.
-export const VIEWER_VERSION = "36";
+// 37: shared models.dev prices and Claude fast-mode pricing sidecars.
+export const VIEWER_VERSION = "37";
 
 // A project gets viewer/ and nothing else — no src/ tree beside it — so the
 // modules the bundled dashboard imports are copied in next to it, under the
@@ -41,6 +42,7 @@ export const VIEWER_VERSION = "36";
 export const VIEWER_SIDECARS = [
   ["lib/config.mjs", "config.mjs"],
   ["lib/store.mjs", "store.mjs"],
+  ["lib/vendors/modelsdev/remote-pricing.mjs", "remote-pricing-modelsdev.mjs"],
   ["lib/vendors/zai/remote-pricing.mjs", "remote-pricing-zai.mjs"],
   ["providers/claude/remote-pricing.mjs", "remote-pricing.mjs"],
   ["providers/codex/remote-pricing.mjs", "remote-pricing-codex.mjs"],

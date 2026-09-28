@@ -362,6 +362,7 @@ export function buildTurns(rolloutPath, opts = {}) {
     .map((t, i) =>
       finalizeTurn(t, {
         sessionId,
+        modelProvider: meta.model_provider,
         sessionName: nameFromIndex,
         hierarchy,
         cwd,
@@ -398,11 +399,11 @@ function finalizeTurn(t, ctx) {
     // Keep complete requests that fit, then price the unaccounted remainder short.
     if (Object.keys(counts).some((k) => counts[k] < 0 || counts[k] > remaining[k])) continue;
     const tier = modelInfo(request.model).long;
-    cost = addCost(cost, costOf(request.model, counts, { long: !!tier && request.input > tier.threshold }));
+    cost = addCost(cost, costOf(request.model, counts, { long: !!tier && request.input > tier.threshold, modelProvider: ctx.modelProvider }));
     for (const k of Object.keys(counts)) remaining[k] -= counts[k];
   }
   // A turn with no tokens at all is still priced once, so its cost says how it was labelled.
-  if (Object.values(remaining).some((n) => n > 0) || !t.requests.length) cost = addCost(cost, costOf(model, remaining));
+  if (Object.values(remaining).some((n) => n > 0) || !t.requests.length) cost = addCost(cost, costOf(model, remaining, { modelProvider: ctx.modelProvider }));
 
   const ctxTokens = t.lastCtxInput || d.input;
   const ctxMax = t.ctxWindow || contextMax(model);
@@ -466,6 +467,7 @@ function finalizeTurn(t, ctx) {
       source: cost.source || "priced",
       ...(cost.estimatedRate ? { estimatedRate: true } : {}),
       ...(typeof cost.relabels === "number" ? { relabels: cost.relabels } : {}),
+      ...(cost.rateSource ? { rateSource: cost.rateSource } : {}),
     },
     schema: 2,
   };

@@ -175,9 +175,9 @@ test("an upgrade from epoch 3 accumulates repairs including Codex", async (t) =>
 });
 
 
-test("upgrades through epochs 5 to 8 accumulate their provider scopes", async (t) => {
+test("upgrades through epochs 5 to 9 accumulate their provider scopes", async (t) => {
   const ids = ["opencode", "cline", "roo", "kilo", "claude", "codex", "cursor"];
-  assert.equal(REPAIR_EPOCH, 8);
+  assert.equal(REPAIR_EPOCH, 9);
   for (const installed of [2, 3, 4]) {
     const file = tmpState(t);
     fs.writeFileSync(file, JSON.stringify({ schema: 1, installedRepairEpoch: installed, providers: {} }));
