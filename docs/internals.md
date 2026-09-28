@@ -917,9 +917,13 @@ under `<synthetic>` and 117 ($420.84) were marked estimated for that reason alon
   Codex logs a `feedback_tags` entry per turn, as it starts, with the thread id and
   `"service_tier":"<tier>"`. A turn takes the latest entry logged before the next turn started
   (the last turn, up to five seconds after its end); only the tier is read out of each entry,
-  through the thread index, read-only. Order of evidence: the hook's reading, then a stored
-  tier, then the log. A tier once stored survives re-reads, so evidence read before Codex
-  prunes the log (about ten days are kept) is kept.
+  through the thread index, read-only. Order of evidence: a stored tier (what the hook read
+  when the turn ended, if it saw it), the hook's reading now, then the log. The stored tier
+  comes first because a hook firing again for a turn it already recorded reads today's
+  setting. A tier once stored survives re-reads, so evidence read before Codex prunes the log
+  (about ten days are kept) is kept. The same order holds for Claude's endpoint, after the
+  request-id proof. A failed or empty models.dev download never erases the models.dev
+  supplement already in the Codex cache.
   **Remaining limit:** that log is Codex's internal database, not a documented file; an entry
   or schema this does not recognise gives no tier. Turns older than what the log still holds,
   and never seen by the hook, have no evidence and use Standard; legacy queued hook events also

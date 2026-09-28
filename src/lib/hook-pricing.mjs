@@ -25,6 +25,12 @@ export function classifyEndpoint(value) {
   try { host = new URL(value).hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, ""); }
   catch { return "remote"; }
   if (host === "api.anthropic.com") return "anthropic";
+  // An IPv4-mapped IPv6 address is that IPv4 address; URL writes it as ::ffff:hhhh:hhhh.
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  if (mapped) {
+    const [hi, lo] = [parseInt(mapped[1], 16), parseInt(mapped[2], 16)];
+    host = `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+  }
   if (host === "localhost" || host.endsWith(".localhost") || host === "host.docker.internal"
       || host === "::1" || /^(fc|fd)[0-9a-f]{2}:/.test(host)) return "local";
   // URL canonicalizes IPv4 and IPv6, including expanded loopback addresses.
@@ -41,7 +47,8 @@ export function classifyEndpoint(value) {
  * changed. Never throws.
  */
 export function settingsEvidence(cwd, home = os.homedir()) {
-  const files = cwd ? [path.join(cwd, ".claude", "settings.local.json"), path.join(cwd, ".claude", "settings.json")] : [];
+  const files = typeof cwd === "string" && cwd
+    ? [path.join(cwd, ".claude", "settings.local.json"), path.join(cwd, ".claude", "settings.json")] : [];
   files.push(path.join(home, ".claude", "settings.json"));
   let endpoint = null, changedAt = 0;
   for (const file of files) {

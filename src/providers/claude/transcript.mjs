@@ -483,11 +483,13 @@ export function buildTurns(transcriptPath, opts = {}) {
     return endpoint && Number.isFinite(at) && changedAt <= at ? endpoint : null;
   };
   return turns.map((t, i) => finalizeTurn(t, { ...opts,
-    // Proof from the responses first; then the hook's reading as the turn ended, what an
-    // earlier read stored, and settings unchanged since the turn ran.
+    // Proof from the responses first; then what an earlier read stored (a hook that saw this
+    // turn end, if one did), the hook's reading now, and settings unchanged since the turn ran.
+    // A stored value outranks a later hook: a hook firing again for a turn it already
+    // recorded reads today's environment, which may not be the one the turn ran in.
     endpoint: (provenAnthropic(t) ? "anthropic" : null)
-      || (i === turns.length - 1 ? opts.hookPricing?.endpoint : null)
       || opts.pricingForTurn?.(identities[i], identities)?.endpoint
+      || (i === turns.length - 1 ? opts.hookPricing?.endpoint : null)
       || endpointAt(t.promptEntry.cwd, t.promptEntry.timestamp),
   }, {
     ...session, name: names.get(t.session) || null, title: titles.get(t.session) || null,

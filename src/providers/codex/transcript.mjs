@@ -364,8 +364,9 @@ export function buildTurns(rolloutPath, opts = {}) {
     return { provider: "codex", sessionId, cwd,
       id: continuation && !UUID_RE.test(base) ? `${base}@${continuation}` : base };
   });
-  // Evidence for the tier, best first: the hook's reading of config.toml as the turn ended,
-  // then what an earlier read stored, then Codex's own log while it still holds the thread.
+  // Evidence for the tier, best first: what an earlier read stored (a hook that saw the turn
+  // end, if one did), the hook's reading of config.toml now, then Codex's own log while it
+  // still holds the thread. A hook firing again for a recorded turn reads today's setting.
   let logged = null;
   const loggedTier = (i) => {
     if (logged === null) logged = threadTiers(sessionId, { file: opts.tierLogFile || logsFile() });
@@ -376,8 +377,8 @@ export function buildTurns(rolloutPath, opts = {}) {
     .map((t, i) =>
       finalizeTurn(t, {
         sessionId,
-        serviceTier: (i === turns.length - 1 ? opts.hookPricing?.serviceTier : null)
-          || opts.pricingForTurn?.(identities[i], identities)?.serviceTier
+        serviceTier: opts.pricingForTurn?.(identities[i], identities)?.serviceTier
+          || (i === turns.length - 1 ? opts.hookPricing?.serviceTier : null)
           || loggedTier(i) || null,
         modelProvider: meta.model_provider,
         sessionName: nameFromIndex,

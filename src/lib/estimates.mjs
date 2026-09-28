@@ -25,6 +25,11 @@ const markerFile = (dir) => path.join(dir, "estimates.json");
 // Fields that change on every fetch without the rates changing.
 const VOLATILE = new Set(["fetchedAt", "attemptedAt", "etag"]);
 
+// JSON with object keys sorted: the same rates written in another order are the same rates.
+const stable = (v) => Array.isArray(v) ? `[${v.map(stable).join(",")}]`
+  : v && typeof v === "object" ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${stable(v[k])}`).join(",")}}`
+    : JSON.stringify(v) ?? "null";
+
 /** A fingerprint of every cached rate table (pricing-*.json), ignoring fetch timestamps. */
 export function ratesDigest(dir = stateDir()) {
   const hash = crypto.createHash("sha256");
@@ -36,7 +41,7 @@ export function ratesDigest(dir = stateDir()) {
     const kept = data && typeof data === "object"
       ? Object.fromEntries(Object.entries(data).filter(([k]) => !VOLATILE.has(k)))
       : data;
-    hash.update(name).update("\0").update(JSON.stringify(kept)).update("\0");
+    hash.update(name).update("\0").update(stable(kept)).update("\0");
   }
   return hash.digest("hex");
 }

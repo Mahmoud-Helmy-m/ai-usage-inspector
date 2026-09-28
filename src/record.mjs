@@ -117,7 +117,9 @@ export async function runLauncher({
       : { raw: String(input), truncated: false };
     let payload;
     try { payload = JSON.parse(raw); } catch {}
-    const pricing = hookPricing(provider, payload?.cwd || cwd);
+    // Best-effort evidence: a malformed payload must never cost the event itself.
+    let pricing = {};
+    try { pricing = hookPricing(provider, typeof payload?.cwd === "string" && payload.cwd ? payload.cwd : cwd); } catch {}
     writeSpool({
       pricing,
       schema: 1,

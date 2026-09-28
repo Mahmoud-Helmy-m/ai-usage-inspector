@@ -627,3 +627,62 @@ test("a turn stored as local and free takes its real price once proof arrives", 
   assert.equal(row.endpoint, "anthropic");
   near(row.cost.total, ap.costOf("claude-sonnet-4-6", { input_tokens: 1000, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }).total);
 });
+
+// ---- Findings from the pre-release review (Muse Spark 1.3), each with its reproduction.
+import { ratesDigest } from "../src/lib/estimates.mjs";
+
+const OFFICIAL = ["### Standard pricing data", "",
+  "| Model | Short context input | Short context cached input | Short context cache writes | Short context output | Long context input | Long context cached input | Long context cache writes | Long context output |",
+  "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+  ...["gpt-a", "gpt-b", "gpt-c"].map((id) => `| ${id} | $1.00 | $0.10 | - | $2.00 | - | - | - | - |`)].join("\n");
+
+test("a failed or empty models.dev download keeps the supplement already cached", async (t) => {
+  for (const secondary of [{ ok: false, status: 503 }, { ok: true, status: 200, json: async () => ({}) }]) {
+    const dir = temp(t), file = path.join(dir, "pricing-codex.json");
+    write(file, JSON.stringify({ schema: openai.CACHE_SCHEMA, fetchedAt: 1, attemptedAt: 1,
+      rates: { "gpt-a": { input: 1, cachedInput: 0.1, output: 2, source: "openai" },
+        "mystery-model": { input: 3, cachedInput: 0.3, output: 9, source: "models.dev" } } }));
+    const fetchImpl = async (url) => url.includes("models.dev") ? secondary
+      : { ok: true, status: 200, text: async () => OFFICIAL, headers: { get: () => null } };
+    const r = await openai.refreshPricing({ file, modelsFile: path.join(dir, "absent.json"), ttlMs: 0, fetchImpl, now: 10 });
+    assert.deepEqual(Object.keys(r.rates).sort(), ["gpt-a", "gpt-b", "gpt-c", "mystery-model"]);
+    assert.equal(r.rates["mystery-model"].source, "models.dev");
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).rates["mystery-model"].input, 3);
+  }
+});
+
+test("a hook payload with a non-string cwd still queues its event", async (t) => {
+  const dir = temp(t), spool = path.join(dir, "spool");
+  for (const cwd of [123, true, ["a"], { a: 1 }]) {
+    await runLauncher({ provider: "claude", input: JSON.stringify({ cwd, session_id: "s" }), cwd: dir, dir: spool, spawnWorker: false });
+  }
+  assert.equal(fs.readdirSync(spool).filter((f) => f.endsWith(".event")).length, 4);
+});
+
+test("an IPv4-mapped IPv6 address is classified as the IPv4 address it maps", () => {
+  assert.equal(classifyEndpoint("http://[::ffff:127.0.0.1]:8080/v1"), "local");
+  assert.equal(classifyEndpoint("http://[::ffff:192.168.1.5]"), "local");
+  assert.equal(classifyEndpoint("http://[::ffff:10.1.2.3]"), "local");
+  assert.equal(classifyEndpoint("http://[::ffff:8.8.8.8]"), "remote");
+});
+
+test("a stored endpoint or tier outranks a later hook reading for the same turn", (t) => {
+  const dir = temp(t), file = path.join(dir, "s.jsonl");
+  transcript(file, dir, "claude-sonnet-4-6", [1000]);
+  const [row] = claude.buildTurns(file, { hookPricing: { endpoint: "anthropic" }, pricingForTurn: () => ({ endpoint: "remote" }) });
+  assert.equal(row.endpoint, "remote");
+  const rfile = path.join(dir, "r.jsonl");
+  rollout(rfile, dir, "gpt-6-astra", [1000]);
+  const [crow] = codex.buildTurns(rfile, { hookPricing: { serviceTier: "standard" }, pricingForTurn: () => ({ serviceTier: "fast" }),
+    tierLogFile: path.join(dir, "absent.sqlite") });
+  assert.equal(crow.serviceTier, "fast");
+});
+
+test("the same rates written with keys in another order keep the same fingerprint", (t) => {
+  const a = temp(t), b = temp(t);
+  write(path.join(a, "pricing-claude.json"), JSON.stringify({ fetchedAt: 1, rates: { m: { input: 1, output: 2 }, n: { output: 4, input: 3 } } }));
+  write(path.join(b, "pricing-claude.json"), JSON.stringify({ rates: { n: { input: 3, output: 4 }, m: { output: 2, input: 1 } }, fetchedAt: 2 }));
+  assert.equal(ratesDigest(a), ratesDigest(b));
+  write(path.join(b, "pricing-claude.json"), JSON.stringify({ rates: { n: { input: 3, output: 5 }, m: { output: 2, input: 1 } } }));
+  assert.notEqual(ratesDigest(a), ratesDigest(b), "a changed rate still changes it");
+});

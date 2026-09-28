@@ -175,27 +175,33 @@ export async function refreshPricing({
 
   const sources = { openai: url, "models.dev": modelsUrl };
   for (const r of Object.values(rates)) r.source = "openai";
-  // A secondary failure never holds back official prices or replaces them.
+  // A secondary failure never holds back official prices or replaces them — nor erases the
+  // supplement already cached: without a fresh one, the previous entries stay.
+  let supplemental = Object.fromEntries(Object.entries(cached?.rates || {})
+    .filter(([, r]) => r && r.source === "models.dev")
+    .map(([id, { source, ...r }]) => [id, r]));
+  let fresh = null;
   try {
     let shared = null;
     try { shared = JSON.parse(fs.readFileSync(modelsFile, "utf8")); } catch {}
-    let supplemental = {};
     // Worker, sync, install and viewer refresh the shared cache first. Reusing it
     // avoids a second 5 MB download, while standalone calls still work offline-safe.
     if (shared?.rates && now - shared.fetchedAt < 12 * 60 * 60 * 1000) {
-      supplemental = Object.fromEntries(Object.entries(shared.rates.openai || {}).map(([id, r]) => [id, {
+      fresh = Object.fromEntries(Object.entries(shared.rates.openai || {}).map(([id, r]) => [id, {
         input: r.input, output: r.output, cachedInput: r.cacheRead ?? r.input * 0.1,
         cachedGuessed: r.cacheRead == null, cacheWrite: r.cacheWrite, contextMax: r.contextMax,
         ...(r.tiers ? { tiers: r.tiers } : {}),
       }]));
     } else {
       const extra = await fetchImpl(modelsUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) });
-      if (extra.ok) supplemental = parseModelsDev(await extra.json());
-    }
-    for (const [id, rate] of Object.entries(supplemental)) {
-      if (!Object.hasOwn(rates, id)) rates[id] = { ...rate, source: "models.dev" };
+      if (extra.ok) fresh = parseModelsDev(await extra.json());
     }
   } catch {}
+  // An empty table is a format change, not the news that every model left.
+  if (fresh && Object.keys(fresh).length) supplemental = fresh;
+  for (const [id, rate] of Object.entries(supplemental)) {
+    if (!Object.hasOwn(rates, id)) rates[id] = { ...rate, source: "models.dev" };
+  }
   const changes = diffRates(cached?.rates, rates);
   const etag = res.headers?.get("etag") || cached?.etag || null;
   writeCache(file, { schema: CACHE_SCHEMA, fetchedAt: now, attemptedAt: now, etag, sources, rates });
