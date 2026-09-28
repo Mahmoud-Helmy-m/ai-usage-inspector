@@ -6,7 +6,7 @@
 
 ![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-success)
-![Tests](https://img.shields.io/badge/tests-601-success)
+![Tests](https://img.shields.io/badge/tests-610-success)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
@@ -264,9 +264,11 @@ ids). Only the lab's own listing is used — never a reseller's or a subscriptio
 taken from it records `rateSource: "models.dev"`; a model its lab does not list stays estimated.
 Codex models run locally (Ollama, LM Studio) cost nothing. Claude Code models also cost zero when
 its hook environment or settings identify a local endpoint; only a classification is saved, never
-the URL or credentials. Codex hooks capture Fast/Flex from the top-level config setting (Priority
-means Fast); historical or sweep-only turns without a captured tier use Standard, and missing
-tier rates stay estimated. models.dev context tiers apply per request, with prompts exactly at a
+the URL or credentials — and a turn whose responses carry Anthropic's request ids is priced as an
+API turn whatever the settings say, since only Anthropic's API returns them. Codex hooks capture
+Fast/Flex from the top-level config setting (Priority means Fast); turns the hook did not see take
+their tier from Codex's own log while it still holds them (about ten days), and otherwise use
+Standard. Missing tier rates stay estimated. models.dev context tiers apply per request, with prompts exactly at a
 threshold keeping the lower rate. Claude fast mode uses its published premium rates, including
 scaled cache prices. These are fetched at dashboard start
 (`--no-pricing-refresh` disables that), during `install` and `sync`, and by the background worker

@@ -912,8 +912,18 @@ under `<synthetic>` and 117 ($420.84) were marked estimated for that reason alon
   rates. A missing Fast/Flex price falls back to Standard and is labelled `estimated`.
   Official Standard/Fast/Flex tables share one parser; Batch is ignored. Codex cache schema 4
   and viewer bundle 38 replace readers that dropped service tiers.
-  **Remaining limit:** pre-version turns and turns captured only by sweeps/backfill have no
-  tier evidence and use Standard; legacy queued hook events also stay unstamped. The TOML reader accepts a simple single-line quoted
+  Turns the hook did not see (older ones, sweeps, backfill) take their tier from Codex's own log
+  database, `$CODEX_HOME/logs_2.sqlite` ([`service-tiers.mjs`](../src/providers/codex/service-tiers.mjs)):
+  Codex logs a `feedback_tags` entry per turn, as it starts, with the thread id and
+  `"service_tier":"<tier>"`. A turn takes the latest entry logged before the next turn started
+  (the last turn, up to five seconds after its end); only the tier is read out of each entry,
+  through the thread index, read-only. Order of evidence: the hook's reading, then a stored
+  tier, then the log. A tier once stored survives re-reads, so evidence read before Codex
+  prunes the log (about ten days are kept) is kept.
+  **Remaining limit:** that log is Codex's internal database, not a documented file; an entry
+  or schema this does not recognise gives no tier. Turns older than what the log still holds,
+  and never seen by the hook, have no evidence and use Standard; legacy queued hook events also
+  stay unstamped. Needs Node >= 22.5 for `node:sqlite`. The TOML reader accepts a simple single-line quoted
   `service_tier` assignment before the first `[table]`, with an optional trailing comment;
   profiles, quoted keys and multiline TOML values are not interpreted.
 - **Regional Bedrock uplift.** Without an exact models.dev platform entry, a regional Bedrock
@@ -941,8 +951,14 @@ under `<synthetic>` and 117 ($420.84) were marked estimated for that reason alon
   Local turns and their subagents cost zero, `priced` with `rateSource: "local"`, and never
   register a guessed model or need estimate correction. A `:tag` model name alone proves
   nothing. Codex's existing ollama/lmstudio/oss provider detection is unchanged.
-  **Remaining limit:** transcripts contain no endpoint; evidence comes only from hook env or
-  settings, which cannot reconstruct historical endpoint changes.
+  Anthropic's API answers every request with a request id (`req_` then base62), which Claude
+  Code records on the entry as `requestId`. A turn in which any message, its subagent runs
+  included, carries one was sent to Anthropic and billed — even through a local proxy that
+  forwards to it — so it is `anthropic` from its responses alone, over the hook's reading,
+  a stored value and settings; a turn stored as local and free is then priced again.
+  **Remaining limit:** the absence of a request id proves nothing (other endpoints omit it too),
+  so a past local turn the hook did not see cannot be recognised as local; settings only count
+  for turns that ran after they last changed.
 
 Stored `serviceTier` and `endpoint` survive blank re-reads. Ingest supplies a `pricingForTurn`
 lookup to the parsers, keyed by provider/session/turn in the same session-home store used by

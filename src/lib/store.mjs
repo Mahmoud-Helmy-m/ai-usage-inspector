@@ -248,6 +248,9 @@ export function tokenCount(r) {
 function preserveComputedCost(next, previous, preserveRuns = true) {
   // Endpoint evidence rules out API billing, including an older guessed amount.
   if (next?.endpoint === "local" && next.cost?.rateSource === "local") return next;
+  // And the other way: a turn stored as local and free that its responses now prove was sent to
+  // an API was never free, so its $0 is not a price to keep.
+  if (previous?.cost?.rateSource === "local" && next?.cost && next.cost.rateSource !== "local") return next;
   if (process.env.AI_USAGE_REPRICE === "1") return next;
   if (!previous || !previous.cost || !next || !next.cost) return next;
   if (!COMPUTED_COST_SOURCES.has(previous.cost.source)) return next;

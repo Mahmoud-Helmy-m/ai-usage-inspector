@@ -140,8 +140,19 @@ function collectAssistants(entries) {
       g.ts = e.timestamp || g.ts;
     }
     if (e.promptId && !g.promptId) g.promptId = e.promptId;
+    if (e.requestId && !g.requestId) g.requestId = e.requestId;
   }
   return order.map((id) => byId.get(id));
+}
+
+// Anthropic's API answers every request with a request id ("req_" and base62), which Claude
+// Code records on the entry. A local server does not, so such an id proves the turn was sent
+// to Anthropic and billed — even through a local proxy that forwards to it, and whatever
+// today's settings say. Its absence proves nothing: other endpoints omit it too.
+const ANTHROPIC_REQUEST = /^req_[A-Za-z0-9]{20,}$/;
+const runTree = (run) => [...run.messages, ...run.children.flatMap(runTree)];
+function provenAnthropic(t) {
+  return t.main.concat(t.runs.flatMap(runTree)).some((m) => ANTHROPIC_REQUEST.test(m.requestId || ""));
 }
 
 function emptyTokens() {
@@ -472,7 +483,10 @@ export function buildTurns(transcriptPath, opts = {}) {
     return endpoint && Number.isFinite(at) && changedAt <= at ? endpoint : null;
   };
   return turns.map((t, i) => finalizeTurn(t, { ...opts,
-    endpoint: (i === turns.length - 1 ? opts.hookPricing?.endpoint : null)
+    // Proof from the responses first; then the hook's reading as the turn ended, what an
+    // earlier read stored, and settings unchanged since the turn ran.
+    endpoint: (provenAnthropic(t) ? "anthropic" : null)
+      || (i === turns.length - 1 ? opts.hookPricing?.endpoint : null)
       || opts.pricingForTurn?.(identities[i], identities)?.endpoint
       || endpointAt(t.promptEntry.cwd, t.promptEntry.timestamp),
   }, {

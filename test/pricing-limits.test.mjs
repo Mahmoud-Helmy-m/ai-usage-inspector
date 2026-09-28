@@ -484,3 +484,146 @@ test("settings changed after a turn ran are not evidence for it; the stored cost
   assert.equal(settingsEndpoint(dir, path.join(dir, "home"), Date.parse("2026-09-28T00:00:00Z")), null);
   assert.equal(settingsEndpoint(dir, path.join(dir, "home")), "local", "the hook records the turn that just ended, so today's settings apply");
 });
+
+// ---- Evidence from history: Codex's own log database, and Anthropic's request ids.
+import { tierFromTags, threadTiers, tierAt, closeTierLog } from "../src/providers/codex/service-tiers.mjs";
+
+const sqliteReady = !!process.getBuiltinModule?.("node:sqlite");
+const needsSqlite = { skip: sqliteReady ? false : "node:sqlite needs Node >= 22.5" };
+// A logs_2.sqlite shaped like Codex's: one feedback_tags entry per turn, logged as it starts.
+function tierLog(t, entries, extra = []) {
+  t.after(closeTierLog); // before temp(t): the open database must be closed before its folder goes
+  const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
+  const file = path.join(temp(t), "logs_2.sqlite");
+  const db = new DatabaseSync(file);
+  db.exec("create table logs (id integer primary key autoincrement, ts integer not null, ts_nanos integer not null, level text not null, target text not null, feedback_log_body text, thread_id text)");
+  const add = db.prepare("insert into logs (ts, ts_nanos, level, target, feedback_log_body, thread_id) values (?, ?, 'INFO', ?, ?, ?)");
+  for (const [iso, tier, thread = "s", target = "feedback_tags"] of [...entries, ...extra]) {
+    const ms = Date.parse(iso);
+    add.run(Math.floor(ms / 1000), (ms % 1000) * 1e6, target, `{"model":"x","service_tier":${tier === null ? "null" : `"${tier}"`},"token_budget":1}`, thread);
+  }
+  db.close();
+  return file;
+}
+
+test("feedback tags name the tier; anything else names none", () => {
+  assert.equal(tierFromTags('{"service_tier":"priority"}'), "fast");
+  assert.equal(tierFromTags('{"service_tier":"fast"}'), "fast");
+  assert.equal(tierFromTags('{"service_tier":"flex"}'), "flex");
+  assert.equal(tierFromTags('{"service_tier":"default"}'), "standard");
+  assert.equal(tierFromTags('{"service_tier":null}'), null);
+  assert.equal(tierFromTags('service_tier: Some("fast")'), null, "only the tags form is read");
+  assert.equal(tierFromTags(undefined), null);
+});
+
+test("a turn takes the entry logged before the next turn started, not the next turn's", () => {
+  const entries = [{ at: 1000, tier: "standard" }, { at: 3000, tier: "fast" }];
+  assert.equal(tierAt(entries, { endMs: 2500, nextStartMs: 3000 }), "standard", "the next turn's entry at its start is excluded");
+  assert.equal(tierAt(entries, { endMs: 3100, nextStartMs: null }), "fast");
+  assert.equal(tierAt(entries, { endMs: 500, nextStartMs: 900 }), null, "nothing logged yet");
+  assert.equal(tierAt(entries, {}), null);
+});
+
+test("Codex turns the hook never saw take their tier from Codex's log", needsSqlite, (t) => {
+  const dir = temp(t), file = path.join(dir, "r.jsonl");
+  rollout(file, dir, "gpt-6-astra", [1000, 2000]);
+  const log = tierLog(t, [["2026-09-28T00:00:00Z", "default"], ["2026-09-28T00:00:01Z", "priority"]],
+    [["2026-09-28T00:00:01Z", "flex", "other-thread"], ["2026-09-28T00:00:01Z", "flex", "s", "codex_core::session::handlers"]]);
+  const [first, second] = codex.buildTurns(file, { tierLogFile: log });
+  assert.equal(first.serviceTier, "standard");
+  assert.equal(second.serviceTier, "fast", "priority is fast; other threads and other targets are ignored");
+  near(second.cost.total, cp.costOf("gpt-6-astra", { input: 2000, output: 10 }, { serviceTier: "fast" }).total);
+});
+
+test("the hook's reading and a stored tier outrank the log", needsSqlite, (t) => {
+  const dir = temp(t), file = path.join(dir, "r.jsonl");
+  rollout(file, dir, "gpt-6-astra", [1000, 2000]);
+  const log = tierLog(t, [["2026-09-28T00:00:00Z", "priority"], ["2026-09-28T00:00:01Z", "priority"]]);
+  const turns = codex.buildTurns(file, { tierLogFile: log, hookPricing: { serviceTier: "standard" },
+    pricingForTurn: (row) => (row.id === "s:0" ? { serviceTier: "flex" } : {}) });
+  assert.deepEqual(turns.map((r) => [r.id, r.serviceTier]), [["s:0", "flex"], ["s:1", "standard"]]);
+});
+
+test("a missing, empty or foreign log database gives no tier and never throws", needsSqlite, (t) => {
+  const dir = temp(t), file = path.join(dir, "r.jsonl");
+  rollout(file, dir, "gpt-6-astra", [1000]);
+  assert.equal(codex.buildTurns(file, { tierLogFile: path.join(dir, "absent.sqlite") })[0].serviceTier, null);
+  const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
+  const foreign = path.join(dir, "foreign.sqlite");
+  new DatabaseSync(foreign).close();
+  closeTierLog();
+  assert.deepEqual(threadTiers("s", { file: foreign }), []);
+  fs.writeFileSync(path.join(dir, "junk.sqlite"), "not a database");
+  closeTierLog();
+  assert.deepEqual(threadTiers("s", { file: path.join(dir, "junk.sqlite") }), []);
+  closeTierLog();
+});
+
+test("a tier read from the log is kept after Codex prunes it", needsSqlite, async (t) => {
+  const dir = temp(t), file = path.join(dir, "r.jsonl");
+  rollout(file, dir, "gpt-6-astra", [1000]);
+  const log = tierLog(t, [["2026-09-28T00:00:00Z", "priority"]]);
+  process.env.CODEX_HOME = path.dirname(log);
+  await ingestTranscript(codex, { transcriptPath: file });
+  assert.equal(rows(store(dir))[0].serviceTier, "fast");
+  closeTierLog();
+  fs.rmSync(log);
+  await ingestTranscript(codex, { transcriptPath: file });
+  assert.equal(rows(store(dir))[0].serviceTier, "fast");
+});
+
+const REQ = "req_011CZabcdefghijklmnopqrstu";
+function claudeWithRequest(file, cwd, requestId, sid = "s") {
+  jsonl(file, [
+    { type: "user", uuid: "u0", sessionId: sid, cwd, timestamp: "2026-09-28T00:00:00Z", message: { role: "user", content: "hi" } },
+    { type: "assistant", uuid: "a0", sessionId: sid, cwd, ...(requestId ? { requestId } : {}),
+      message: { id: "msg_01ABCDEFGHIJKLMNOPQRSTUV", role: "assistant", model: "claude-sonnet-4-6",
+        usage: { input_tokens: 1000, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, content: [] } },
+  ]);
+}
+
+test("an Anthropic request id proves the API was used, over a local hook reading or settings", (t) => {
+  const dir = temp(t), file = path.join(dir, "s.jsonl");
+  claudeWithRequest(file, dir, REQ);
+  settings(dir, "http://localhost:11434");
+  const [row] = claude.buildTurns(file, { hookPricing: { endpoint: "local" } });
+  assert.equal(row.endpoint, "anthropic");
+  assert.ok(row.cost.total > 0);
+  assert.equal(row.cost.rateSource, undefined);
+  for (const id of [null, "req_short", "request-123", "req_" + "a".repeat(10)]) {
+    claudeWithRequest(file, dir, id);
+    assert.equal(claude.buildTurns(file, { hookPricing: { endpoint: "local" } })[0].endpoint, "local", `no proof: ${id}`);
+  }
+});
+
+test("a subagent run's request id is proof for its turn", (t) => {
+  const dir = temp(t), file = path.join(dir, "s.jsonl"), sub = path.join(dir, "s", "subagents");
+  jsonl(file, [
+    { type: "user", uuid: "u0", sessionId: "s", cwd: dir, timestamp: "2026-09-28T00:00:00Z", message: { role: "user", content: "hi" } },
+    { type: "assistant", uuid: "a0", sessionId: "s", cwd: dir, timestamp: "2026-09-28T00:00:01Z",
+      message: { id: "m0", role: "assistant", model: "claude-sonnet-4-6", content: [{ type: "tool_use", id: "toolu_1", name: "Agent", input: {} }],
+        usage: { input_tokens: 10, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } },
+  ]);
+  write(path.join(sub, "agent-a1.jsonl"), [
+    { type: "user", agentId: "a1", isSidechain: true, timestamp: "2026-09-28T00:00:02Z", message: { content: "go" } },
+    { type: "assistant", agentId: "a1", requestId: REQ, timestamp: "2026-09-28T00:00:03Z",
+      message: { id: "s1", role: "assistant", model: "claude-sonnet-4-6", content: [], usage: { input_tokens: 500, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } },
+  ].map(JSON.stringify).join("\n"));
+  write(path.join(sub, "agent-a1.meta.json"), JSON.stringify({ agentType: "Explore", toolUseId: "toolu_1", spawnDepth: 1 }));
+  const [row] = claude.buildTurns(file, { hookPricing: { endpoint: "local" } });
+  assert.equal(row.subagents.length, 1, "the run is attached");
+  assert.equal(row.endpoint, "anthropic");
+  assert.ok(row.subagents[0].cost.total > 0);
+});
+
+test("a turn stored as local and free takes its real price once proof arrives", async (t) => {
+  const dir = temp(t), file = path.join(dir, "s.jsonl");
+  claudeWithRequest(file, dir, null);
+  await ingest(claude, hook(file, dir), { endpoint: "local" });
+  assert.equal(rows(store(dir))[0].cost.total, 0);
+  claudeWithRequest(file, dir, REQ);
+  await ingestTranscript(claude, { transcriptPath: file });
+  const [row] = rows(store(dir));
+  assert.equal(row.endpoint, "anthropic");
+  near(row.cost.total, ap.costOf("claude-sonnet-4-6", { input_tokens: 1000, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }).total);
+});

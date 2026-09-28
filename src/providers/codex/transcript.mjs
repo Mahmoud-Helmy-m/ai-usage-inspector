@@ -18,6 +18,7 @@ import path from "node:path";
 import { HOME } from "../../lib/paths.mjs";
 import { addCost, zeroCost } from "../../lib/pricing-core.mjs";
 import { costOf, contextMax, modelInfo } from "./pricing.mjs";
+import { threadTiers, tierAt, logsFile } from "./service-tiers.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -363,12 +364,21 @@ export function buildTurns(rolloutPath, opts = {}) {
     return { provider: "codex", sessionId, cwd,
       id: continuation && !UUID_RE.test(base) ? `${base}@${continuation}` : base };
   });
+  // Evidence for the tier, best first: the hook's reading of config.toml as the turn ended,
+  // then what an earlier read stored, then Codex's own log while it still holds the thread.
+  let logged = null;
+  const loggedTier = (i) => {
+    if (logged === null) logged = threadTiers(sessionId, { file: opts.tierLogFile || logsFile() });
+    const t = turns[i], next = turns[i + 1];
+    return tierAt(logged, { endMs: Date.parse(t.endTs || t.ts), nextStartMs: next ? Date.parse(next.ts) : null });
+  };
   return turns
     .map((t, i) =>
       finalizeTurn(t, {
         sessionId,
         serviceTier: (i === turns.length - 1 ? opts.hookPricing?.serviceTier : null)
-          || opts.pricingForTurn?.(identities[i], identities)?.serviceTier || null,
+          || opts.pricingForTurn?.(identities[i], identities)?.serviceTier
+          || loggedTier(i) || null,
         modelProvider: meta.model_provider,
         sessionName: nameFromIndex,
         hierarchy,
