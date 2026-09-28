@@ -248,7 +248,7 @@ test("worker refreshes all providers, shortens Codex and shared GLM guesses, cor
     const refreshers = Object.fromEntries(["codex", "claude", "cursor", "zai"].map((id) => [id, async (opts) => {
       calls.push([id, opts]); return { status: id === "codex" ? status : "fresh" };
     }]));
-    await refreshRatesAndCorrect({ providers, refreshers, correct: async (p) => corrected.push(p.id) });
+    await refreshRatesAndCorrect({ providers, refreshers, correct: async (p) => corrected.push(p.id), ratesChanged: () => false });
     assert.equal(calls.length, 4);
     assert.equal(calls.find(([id]) => id === "codex")[1].ttlMs, guessed.length ? 3600000 : 12 * 3600000);
     assert.equal(calls.find(([id]) => id === "zai")[1].ttlMs, 3600000);

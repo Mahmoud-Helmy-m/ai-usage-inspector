@@ -91,6 +91,9 @@ test("--claude registers a Stop hook and copies the app into the sandbox", (t) =
   assert.match(hookText(settings.hooks.Stop), /--provider claude/);
   assert.ok(fs.existsSync(path.join(box.home, ".ai-usage-inspector", "app", "src", "record.mjs")));
   assert.ok(fs.existsSync(path.join(box.home, ".ai-usage-inspector", "config.json")), "global defaults seeded");
+  // Install corrects stored estimates as a catch-up and records it, so the worker does not
+  // repeat the same correction for the same rates.
+  assert.ok(fs.existsSync(path.join(box.home, ".ai-usage-inspector", "estimates.json")), "the correction is recorded");
 });
 
 test("installing twice does not duplicate the hook", (t) => {

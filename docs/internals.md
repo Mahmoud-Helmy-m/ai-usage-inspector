@@ -800,13 +800,22 @@ A model released after this machine last fetched rates is priced from a fallback
   pricing modules record those guesses (`guessedModels`): only ids that look like a model and only
   turns that used tokens, so `<synthetic>` and `unknown` never trigger a fetch. Each refresher
   keeps its own one-hour backoff after a failure, and `AI_USAGE_NO_PRICING_REFRESH=1` blocks them.
-- **Stored estimates are priced again.** When a refresh learned new rates, or a guess from this
-  run is already priceable, [`src/lib/estimates.mjs`](../src/lib/estimates.mjs) finds the Claude and Codex
+- **Stored estimates are priced again.** When the cached rates changed since the last completed
+  correction — whoever fetched them — or a guess from this run is already priceable,
+  [`src/lib/estimates.mjs`](../src/lib/estimates.mjs) finds the Claude and Codex
   rows that are `estimated` and whose every guessed part (the turn and any run marked estimated)
   now has a real rate, and re-reads only the transcripts behind them (rows name their transcript).
   Re-reading, not recomputing from a row's totals: a turn or run can mix models, and only the
-  parser prices each message at its own model. `sync` does the same after a refresh that learned
-  something, and `install` runs it once on every install as a catch-up.
+  parser prices each message at its own model. `sync` does the same, and `install` runs it on
+  every install as a catch-up.
+
+Who fetched does not matter because the dashboard refetches on every start and corrects nothing,
+and the worker and sync that follow find the cache fresh. So `ratesDigest` fingerprints every
+`pricing-*.json` cache (ignoring `fetchedAt`, `attemptedAt` and `etag`), and `correctAll` records
+the fingerprint it corrected against in `~/.ai-usage-inspector/estimates.json` — taken before it
+starts, and only when every provider's correction succeeded. A correction is due whenever the
+current fingerprint differs. It covers every installed agent whose rows name a transcript, even
+from `sync --provider`, since the record covers them all.
 
 The store accepts the new figure because `preserveComputedCost` no longer protects a wrong
 estimate: an estimated stored cost is replaced by a priced one for the same tokens when the amounts

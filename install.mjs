@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 import { getProvider, listProviders, detectInstalled } from "./src/providers/index.mjs";
 import { copyViewerSidecars, launcherName } from "./src/lib/ingest.mjs";
 import { recordInstall } from "./src/lib/scan-state.mjs";
-import { correctEstimatedCosts } from "./src/lib/estimates.mjs";
+import { correctAll } from "./src/lib/estimates.mjs";
 
 const REPO = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
@@ -151,11 +151,11 @@ async function noteInstall(upgrading) {
       else if (r) skip(`rates    could not fetch current ${id} prices (${r.status}); using the built-in table`);
     } catch {}
   }
+  // Always, as a catch-up; recorded, so the worker does not repeat it for the same rates.
   let priced = 0;
-  for (const provider of detectInstalled()) {
-    if (typeof provider.pricedModel !== "function" || typeof provider.transcriptId !== "function") continue;
-    try { priced += (await correctEstimatedCosts(provider)).priced; } catch {}
-  }
+  try {
+    for (const c of Object.values(await correctAll(detectInstalled()))) priced += c.priced || 0;
+  } catch {}
   if (priced) ok(`prices   ${priced} estimated turn(s) re-priced at real rates`);
 }
 

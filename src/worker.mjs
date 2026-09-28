@@ -9,7 +9,7 @@ import { globalConfigPath } from "./lib/config.mjs";
 import { getProvider, detectInstalled } from "./providers/index.mjs";
 import { scanWindow, recordScanResult, claimScan, readScanState } from "./lib/scan-state.mjs";
 import { backupCandidateStores, candidateStores, cleanUpCopies } from "./lib/copies.mjs";
-import { correctEstimatedCosts } from "./lib/estimates.mjs";
+import { correctEstimatedCosts, correctAll, ratesChangedSinceCorrection } from "./lib/estimates.mjs";
 import { refreshPricing as refreshZaiPricing } from "./lib/vendors/zai/pricing.mjs";
 
 const DEFAULT_MAX_ATTEMPTS = 3;
@@ -415,7 +415,8 @@ const RATES_TTL_MS = 12 * HOUR_MS;
  * after one hour when a turn this run had to guess a model's price, so a model released since
  * the last fetch gets its real rate within the hour instead of within the day. Each refresher
  * keeps its own backoff after a failure, and AI_USAGE_NO_PRICING_REFRESH=1 keeps them offline.
- * When the rates learned anything, stored estimates that can now be priced are priced.
+ * When the cached rates changed since stored estimates were last corrected — whoever fetched
+ * them — the estimates that can now be priced are priced.
  * Everything is injectable for tests; nothing here may throw.
  */
 export async function refreshRatesAndCorrect({
@@ -423,6 +424,7 @@ export async function refreshRatesAndCorrect({
   refreshers = {},
   refreshZai = refreshZaiPricing,
   correct = correctEstimatedCosts,
+  ratesChanged = ratesChangedSinceCorrection,
   timeoutMs = 5_000,
 } = {}) {
   const result = { guessed: [], refreshed: [], corrected: {} };
@@ -446,14 +448,26 @@ export async function refreshRatesAndCorrect({
       guessed.some((m) => provider.id !== "claude" || !/^glm-/i.test(m)));
   }
   if (guesses.size) await refresh("zai", refreshers.zai || refreshZai, guessedGlm);
-  for (const [provider, guessed] of guesses) {
-    try {
-      if (typeof provider.pricedModel === "function"
-          && (learned || guessed.some((m) => provider.pricedModel(m)))) {
+  // Rates another process fetched count as much as ours: the dashboard refetches on every start
+  // and corrects nothing, and after it this run finds the cache fresh.
+  let changed = false;
+  try { changed = learned || ratesChanged(); } catch {}
+  if (changed) {
+    try { result.corrected = await correctAll([...guesses.keys()], { correct }); } catch {}
+  } else {
+    // A guess made this run may already be priceable: another process learned the rate after
+    // this one loaded the cache. Only that provider's rows can be affected.
+    for (const [provider, guessed] of guesses) {
+      try {
         // Cursor's SQLite references have no transcriptId; correction needs file-backed rows.
-        if (typeof provider.transcriptId === "function") result.corrected[provider.id] = await correct(provider);
-      }
-    } catch {}
+        if (typeof provider.pricedModel === "function" && typeof provider.transcriptId === "function"
+            && guessed.some((m) => provider.pricedModel(m))) {
+          result.corrected[provider.id] = await correct(provider);
+        }
+      } catch {}
+    }
+  }
+  for (const provider of guesses.keys()) {
     try { provider.clearGuessedModels?.(); } catch {}
   }
   return result;

@@ -22,7 +22,7 @@ import { getProvider, detectInstalled } from "./providers/index.mjs";
 import { ingestTranscript } from "./lib/ingest.mjs";
 import { markRepaired, repairDue, claimScan, recordScanResult } from "./lib/scan-state.mjs";
 import { backupCandidateStores, candidateStores, cleanUpCopies } from "./lib/copies.mjs";
-import { correctEstimatedCosts } from "./lib/estimates.mjs";
+import { correctAll, ratesChangedSinceCorrection } from "./lib/estimates.mjs";
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -136,15 +136,17 @@ async function main() {
       }
     } catch {}
   }
-  // New rates can price turns stored with a guessed one; re-read just those.
-  if (ratesLearned && process.env.AI_USAGE_RELABEL !== "1") {
-    for (const p of providers) {
-      if (typeof p.pricedModel !== "function" || typeof p.transcriptId !== "function") continue;
-      try {
-        const c = await correctEstimatedCosts(p);
-        if (c.priced) console.log(`  ${p.id}: ${c.priced} estimated turn(s) priced at real rates, from ${c.reread} transcript(s)`);
-      } catch {}
-    }
+  // New rates can price turns stored with a guessed one; re-read just those. Due whenever the
+  // cached rates changed since the last correction, whoever fetched them (the dashboard that
+  // launched this sync refetches on start). Every installed agent is corrected, not only the
+  // one asked for: the record of the last correction covers them all.
+  if (process.env.AI_USAGE_RELABEL !== "1" && (ratesLearned || ratesChangedSinceCorrection())) {
+    try {
+      const corrected = await correctAll(detectInstalled());
+      for (const [id, c] of Object.entries(corrected)) {
+        if (c.priced) console.log(`  ${id}: ${c.priced} estimated turn(s) priced at real rates, from ${c.reread} transcript(s)`);
+      }
+    } catch {}
   }
 
   for (const p of providers) {

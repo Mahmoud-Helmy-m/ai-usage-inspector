@@ -8,7 +8,7 @@ import * as claude from "../src/providers/claude/index.mjs";
 import { applyRemoteRates, costOf, guessedModels, clearGuessedModels, pricedModel } from "../src/providers/claude/pricing.mjs";
 import { ingestTranscript } from "../src/lib/ingest.mjs";
 import { upsertSession } from "../src/lib/store.mjs";
-import { correctEstimatedCosts, correctable } from "../src/lib/estimates.mjs";
+import { correctEstimatedCosts, correctable, correctAll, ratesChangedSinceCorrection } from "../src/lib/estimates.mjs";
 import { refreshRatesAndCorrect } from "../src/worker.mjs";
 
 const tmp = (t, name) => {
@@ -175,19 +175,19 @@ test("the worker refreshes rates on its own, within the hour when a turn had to 
   const correct = async () => { corrected++; return { rows: 0 }; };
 
   let f = fakeClaude();
-  await refreshRatesAndCorrect({ providers: [f.provider], refreshZai, correct });
+  await refreshRatesAndCorrect({ providers: [f.provider], refreshZai, correct, ratesChanged: () => false });
   assert.equal(f.calls.refresh[0].ttlMs, 12 * 3600e3, "twelve-hourly when nothing was guessed");
   assert.equal(zai[0].ttlMs, 12 * 3600e3);
   assert.equal(corrected, 0, "nothing learned, nothing to correct");
 
   f = fakeClaude({ guessed: ["claude-opus-5-5"] });
-  await refreshRatesAndCorrect({ providers: [f.provider], refreshZai, correct });
+  await refreshRatesAndCorrect({ providers: [f.provider], refreshZai, correct, ratesChanged: () => false });
   assert.equal(f.calls.refresh[0].ttlMs, 3600e3, "an Anthropic guess refreshes Anthropic's rates within the hour");
   assert.equal(zai[1].ttlMs, 12 * 3600e3, "and leaves z.ai on its usual schedule");
   assert.equal(f.calls.cleared, 1, "guesses are forgotten once handled");
 
   f = fakeClaude({ guessed: ["glm-9"] });
-  await refreshRatesAndCorrect({ providers: [f.provider], refreshZai, correct });
+  await refreshRatesAndCorrect({ providers: [f.provider], refreshZai, correct, ratesChanged: () => false });
   assert.equal(zai[2].ttlMs, 3600e3, "a GLM guess refreshes z.ai's rates within the hour");
   assert.equal(f.calls.refresh[0].ttlMs, 12 * 3600e3);
 });
@@ -196,14 +196,55 @@ test("the worker prices stored estimates when rates were learned, or when a gues
   const refreshZai = async () => ({ status: "fresh" });
   let corrected = 0;
   const correct = async () => { corrected++; return { rows: 1 }; };
-  await refreshRatesAndCorrect({ providers: [fakeClaude({ status: "updated" }).provider], refreshZai, correct });
+  await refreshRatesAndCorrect({ providers: [fakeClaude({ status: "updated" }).provider], refreshZai, correct, ratesChanged: () => false });
   assert.equal(corrected, 1, "new rates arrived");
-  await refreshRatesAndCorrect({ providers: [fakeClaude({ guessed: ["m"], priced: () => true }).provider], refreshZai, correct });
+  await refreshRatesAndCorrect({ providers: [fakeClaude({ guessed: ["m"], priced: () => true }).provider], refreshZai, correct, ratesChanged: () => false });
   assert.equal(corrected, 2, "another process already learned the rate");
-  await refreshRatesAndCorrect({ providers: [fakeClaude({ guessed: ["m"], priced: () => false }).provider], refreshZai, correct });
+  await refreshRatesAndCorrect({ providers: [fakeClaude({ guessed: ["m"], priced: () => false }).provider], refreshZai, correct, ratesChanged: () => false });
   assert.equal(corrected, 2, "still unknown: nothing to re-read");
   const failing = fakeClaude({ status: "updated" });
   failing.provider.refreshPricing = async () => { throw new Error("offline"); };
-  await refreshRatesAndCorrect({ providers: [failing.provider], refreshZai: async () => { throw new Error("offline"); }, correct });
+  await refreshRatesAndCorrect({ providers: [failing.provider], refreshZai: async () => { throw new Error("offline"); }, correct, ratesChanged: () => false });
   assert.equal(corrected, 2, "a failed refresh learns nothing and throws nothing");
+});
+
+// Whoever fetched new rates, the correction happens: the dashboard refetches on every start and
+// corrects nothing, and after it the worker and sync find the cache fresh and learn nothing.
+test("rates changed by another process are corrected against once, and only when they changed", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ai-usage-rates-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cache = (rates, extra = {}) => fs.writeFileSync(path.join(dir, "pricing-claude.json"), JSON.stringify({ fetchedAt: 1, etag: "a", ...extra, rates }));
+  cache({ "claude-opus-5-5": { input: 4, output: 20 } });
+  assert.equal(ratesChangedSinceCorrection(dir), true, "never corrected: due");
+
+  const seen = [];
+  const correct = async (p) => { seen.push(p.id); return { priced: 0 }; };
+  const providers = [
+    { id: "claude", pricedModel: () => true, transcriptId: (f) => f },
+    { id: "codex", pricedModel: () => true, transcriptId: (f) => f },
+    { id: "cursor", pricedModel: () => true },
+  ];
+  await correctAll(providers, { correct, dir });
+  assert.deepEqual(seen, ["claude", "codex"], "every provider whose rows can be re-read");
+  assert.equal(ratesChangedSinceCorrection(dir), false);
+
+  cache({ "claude-opus-5-5": { input: 4, output: 20 } }, { fetchedAt: 2, attemptedAt: 2, etag: "b" });
+  assert.equal(ratesChangedSinceCorrection(dir), false, "a refetch of the same rates is not a change");
+  cache({ "claude-opus-5-5": { input: 4, output: 20 }, "claude-future-9": { input: 1, output: 5 } });
+  assert.equal(ratesChangedSinceCorrection(dir), true, "a new model is");
+  fs.writeFileSync(path.join(dir, "pricing-zai.json"), JSON.stringify({ rates: {} }));
+
+  await correctAll(providers, { correct: async () => { throw new Error("locked"); }, dir });
+  assert.equal(ratesChangedSinceCorrection(dir), true, "a failed correction is tried again");
+  await correctAll(providers, { correct, dir });
+  assert.equal(ratesChangedSinceCorrection(dir), false);
+});
+
+test("the worker corrects every provider when the cached rates changed, though it learned nothing itself", async () => {
+  const seen = [];
+  const correct = async (p) => { seen.push(p.id); return { priced: 0 }; };
+  const f = fakeClaude();
+  await refreshRatesAndCorrect({ providers: [f.provider], refreshZai: async () => ({ status: "fresh" }), correct, ratesChanged: () => true });
+  assert.deepEqual(seen, ["claude"]);
+  assert.equal(f.calls.cleared, 1);
 });

@@ -152,3 +152,51 @@ test("sync re-measures the store a dashboard names, even with no transcript left
   const [row] = fs.readFileSync(usage, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
   assert.deepEqual([row.contextMax, row.contextFillPct], [1_000_000, 80]);
 });
+
+// The dashboard refetches rates on every start but corrects nothing, then launches this sync,
+// which finds the cache fresh and learns nothing itself. The turn stored with a guessed price
+// must still be priced, although its rollout is outside the window this sync reads.
+test("sync prices a stored estimate once rates another process fetched know its model", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ai-usage-synchome-"));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "ai-usage-syncproj-"));
+  t.after(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(project, { recursive: true, force: true });
+  });
+  const state = path.join(home, "scan-state.json");
+  const thread = "019f5143-59f3-7143-8649-4ff9f3b2f7d0";
+  const day = path.join(home, ".codex", "sessions", "2026", "08", "01");
+  fs.mkdirSync(day, { recursive: true });
+  const rollout = path.join(day, `rollout-2026-08-01T10-00-00-${thread}.jsonl`);
+  const rec = (timestamp, type, payload) => JSON.stringify({ timestamp, type, payload });
+  fs.writeFileSync(rollout, [
+    rec("2026-08-01T10:00:00.000Z", "session_meta", { id: thread, cwd: project, cli_version: "0.154.0" }),
+    rec("2026-08-01T10:00:00.500Z", "turn_context", { model: "gpt-future-sync-8", cwd: project }),
+    rec("2026-08-01T10:00:01.000Z", "event_msg", { type: "user_message", message: "an old turn" }),
+    rec("2026-08-01T10:00:02.000Z", "event_msg", { type: "token_count", info: { total_token_usage: { input_tokens: 1000000, output_tokens: 0 }, last_token_usage: { input_tokens: 1000000, output_tokens: 0 } } }),
+  ].join("\n") + "\n");
+  const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  fs.utimesSync(rollout, old, old);
+
+  const env = { ...process.env, HOME: home, USERPROFILE: home, AI_USAGE_SCAN_STATE_FILE: state, AI_USAGE_NO_PRICING_REFRESH: "1", NO_COLOR: "1" };
+  delete env.AI_USAGE_DIR;
+  delete env.CODEX_HOME;
+  const usage = path.join(project, ".ai-usage", "usage.ndjson");
+  const row = () => JSON.parse(fs.readFileSync(usage, "utf8").trim());
+  const sync = () => {
+    const r = runSync(env, "codex");
+    assert.equal(r.status, 0, r.stderr);
+  };
+
+  await recordInstall({ file: state, upgrading: true, providerIds: ["codex"] });
+  sync();
+  assert.equal(row().cost.source, "estimated", "an unknown model is priced on a guess");
+
+  // What a dashboard start leaves behind: the rate, fetched by someone else.
+  const cache = path.join(home, ".ai-usage-inspector", "pricing-codex.json");
+  fs.writeFileSync(cache, JSON.stringify({ schema: 3, fetchedAt: Date.now(), attemptedAt: Date.now(),
+    rates: { "gpt-future-sync-8": { input: 3, cachedInput: 0.3, output: 12, source: "openai" } } }));
+  sync();
+  assert.equal(row().cost.source, "priced");
+  assert.equal(row().cost.total, 3, "one million input tokens at $3");
+});

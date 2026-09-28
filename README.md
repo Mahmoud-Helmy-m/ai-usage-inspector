@@ -6,7 +6,7 @@
 
 ![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-success)
-![Tests](https://img.shields.io/badge/tests-463-success)
+![Tests](https://img.shields.io/badge/tests-466-success)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
@@ -350,7 +350,7 @@ The promise covers rates, not tokens: when a re-read counts different tokens for
 capture was incomplete, or an older version gave them to the wrong turn — its cost is worked out
 again for the tokens really there. If a row is
 labelled `estimated` in Claude or Codex because its model was newer than the cached rates, it is priced
-again automatically once the real rate is fetched: the worker, `sync` and `install` re-read just
+again automatically once the real rate is fetched — by anything, the dashboard included: the worker, `sync` and `install` re-read just
 the transcripts behind those rows, so a turn that mixed models is still priced message by message.
 An estimate is a placeholder, not the rate on the day, so this restates only guesses that turned
 out wrong — never a cost that was priced. An estimate that happened to match the real amount keeps

@@ -7,12 +7,71 @@
 // estimated rows whose model now has a real rate and re-reads just the transcripts behind them;
 // the store takes the new price because an estimate never counted as the rate on the day
 // (see preserveComputedCost).
+import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { ingestTranscript } from "./ingest.mjs";
 import { workspaceFile } from "./paths.mjs";
 
 const HEAD_BYTES = 256 * 1024;
+
+// Who fetched new rates must not decide whether stored estimates are corrected: the dashboard
+// refetches on every start and corrects nothing, and after it the worker and sync find the cache
+// fresh. So the rate caches are fingerprinted, and a correction is due whenever the fingerprint
+// differs from the one recorded at the last completed correction.
+const stateDir = () => path.join(os.homedir(), ".ai-usage-inspector");
+const markerFile = (dir) => path.join(dir, "estimates.json");
+// Fields that change on every fetch without the rates changing.
+const VOLATILE = new Set(["fetchedAt", "attemptedAt", "etag"]);
+
+/** A fingerprint of every cached rate table (pricing-*.json), ignoring fetch timestamps. */
+export function ratesDigest(dir = stateDir()) {
+  const hash = crypto.createHash("sha256");
+  let names = [];
+  try { names = fs.readdirSync(dir).filter((n) => /^pricing-.+\.json$/.test(n)).sort(); } catch {}
+  for (const name of names) {
+    let data = null;
+    try { data = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")); } catch {}
+    const kept = data && typeof data === "object"
+      ? Object.fromEntries(Object.entries(data).filter(([k]) => !VOLATILE.has(k)))
+      : data;
+    hash.update(name).update("\0").update(JSON.stringify(kept)).update("\0");
+  }
+  return hash.digest("hex");
+}
+
+/** Have the cached rates changed since stored estimates were last corrected? Never throws. */
+export function ratesChangedSinceCorrection(dir = stateDir()) {
+  try {
+    const marker = JSON.parse(fs.readFileSync(markerFile(dir), "utf8"));
+    return !marker || marker.ratesDigest !== ratesDigest(dir);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Correct every given provider that supports it, then record the rates it corrected against —
+ * the fingerprint taken before starting, so rates that change meanwhile are caught next time.
+ * Nothing is recorded if a provider's correction failed. Returns { <id>: result }.
+ */
+export async function correctAll(providers, { correct = correctEstimatedCosts, dir = stateDir() } = {}) {
+  const digest = ratesDigest(dir);
+  const results = {};
+  let ok = true;
+  for (const provider of providers.filter(Boolean)) {
+    if (typeof provider.pricedModel !== "function" || typeof provider.transcriptId !== "function") continue;
+    try { results[provider.id] = await correct(provider); } catch { ok = false; }
+  }
+  if (ok) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(markerFile(dir), JSON.stringify({ ratesDigest: digest, correctedAt: Date.now() }));
+    } catch {}
+  }
+  return results;
+}
 
 function readJsonl(file, bytes = Infinity) {
   let text = "";
