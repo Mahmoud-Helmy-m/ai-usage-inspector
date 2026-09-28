@@ -535,7 +535,7 @@ them:
 |---|---|---|
 | Claude | Anthropic's [pricing](https://platform.claude.com/docs/en/about-claude/pricing.md) and [models](https://platform.claude.com/docs/en/about-claude/models/overview.md) pages | `~/.ai-usage-inspector/pricing-claude.json` |
 | z.ai | [Published pricing](https://docs.z.ai/guides/overview/pricing.md) | `~/.ai-usage-inspector/pricing-zai.json` |
-| OpenAI | [Official Standard pricing](https://developers.openai.com/api/docs/pricing.md); [models.dev](https://models.dev/api.json) only for missing ids | `~/.ai-usage-inspector/pricing-codex.json` |
+| OpenAI | [Official Standard/Fast/Flex pricing](https://developers.openai.com/api/docs/pricing.md); [models.dev](https://models.dev/api.json) only for missing ids | `~/.ai-usage-inspector/pricing-codex.json` |
 | Cursor | Cursor's [models & pricing](https://cursor.com/docs/models-and-pricing.md) docs | `~/.ai-usage-inspector/pricing-cursor.json` |
 | Other labs and platforms | [models.dev](https://models.dev/api.json), a community dataset | `~/.ai-usage-inspector/pricing-modelsdev.json` |
 | OpenCode | none needed — it stores its own cost per message | — |
@@ -613,8 +613,9 @@ back off for one hour (capped by the ttl, so dashboard starts still try). ETags 
 `AI_USAGE_NO_PRICING_REFRESH=1` disables all pricing requests; tests inject fetch implementations.
 Only public price data is requested: no prompts, tokens or costs are sent.
 
-Codex parses only `### Standard pricing data` from OpenAI's markdown: Batch, Flex and Fast
-prices are ignored. Short and long input, cached input, cache-write and output prices are kept.
+Codex parses `### Standard pricing data`, `### Fast pricing data` and `### Flex pricing data`
+from OpenAI's markdown using the same row parser; Batch is ignored. Fast/Flex are nested under
+each Standard entry. Short and long input, cached input, cache-write and output prices are kept.
 A cached-input dash means input price with no discount; a cache-write dash means not applicable.
 Long tiers use the row's `<NK` threshold, otherwise OpenAI's documented 272,000 tokens. Each
 request whose input (including cached tokens) exceeds that threshold uses the long tier.
@@ -904,13 +905,51 @@ under `<synthetic>` and 117 ($420.84) were marked estimated for that reason alon
 
 ## Known limits
 
-- **Codex Fast tier.** Rollouts do not record the service tier in `turn_context`, so costs use
-  OpenAI Standard prices even when the request may have used Fast.
+- **Codex Fast/Flex tiers.** The hook captures the top-level `service_tier` from
+  `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`) before queuing, and stamps only
+  the rollout's last turn. `priority` becomes `fast`; `default`, `auto`, missing or unknown
+  values become `standard`. Each request uses that turn's tier, including its own long-context
+  rates. A missing Fast/Flex price falls back to Standard and is labelled `estimated`.
+  Official Standard/Fast/Flex tables share one parser; Batch is ignored. Codex cache schema 4
+  and viewer bundle 38 replace readers that dropped service tiers.
+  **Remaining limit:** pre-version turns and turns captured only by sweeps/backfill have no
+  tier evidence and use Standard; legacy queued hook events also stay unstamped. The TOML reader accepts a simple single-line quoted
+  `service_tier` assignment before the first `[table]`, with an optional trailing comment;
+  profiles, quoted keys and multiline TOML values are not interpreted.
 - **Regional Bedrock uplift.** Without an exact models.dev platform entry, a regional Bedrock
   id uses Anthropic's price and may omit a regional uplift. No multiplier is guessed.
-- **models.dev context tiers.** Community `cost.tiers` prices are not applied; costs use the base tier.
-- **Local models through Claude Code.** Its transcript does not identify local execution reliably,
-  so a locally served model cannot automatically be assigned zero cost. Codex records its provider.
+- **models.dev context tiers.** The trimmed cache retains valid context tiers sorted by size,
+  ignoring other tier types. Each message/request selects the highest threshold strictly below
+  its prompt size; equality stays in the lower tier. Claude counts input plus cache reads and
+  cache creation; Codex uses `last_token_usage.input_tokens`, which already includes hits.
+  Missing tier cache-write prices use that tier's input rate; missing hit prices remain unknown
+  and hits are billed at input with `estimated` provenance. An unaccounted Codex cumulative
+  remainder has no request size and uses the base price. These models were first priced in
+  unpublished 2.11.1, so no repair epoch is needed.
+- **Local models through Claude Code.** The hook classifies `ANTHROPIC_BASE_URL` before queuing
+  and stamps only the last turn. If the variable is absent, settings are checked in order:
+  `<cwd>/.claude/settings.local.json`, `<cwd>/.claude/settings.json`, then
+  `~/.claude/settings.json`; the first `env` block defining the variable wins. Sweeps use only
+  settings at each turn's cwd, and only for a turn that ran after every file in that chain last
+  changed: settings read now say nothing about earlier turns, and pointing Claude Code at a local
+  model today must not turn a history of API use into $0. Otherwise, and when none defines the
+  variable, a sweep stamps nothing. Only `anthropic`, `local`
+  or `remote` is saved, never the endpoint URL or its credentials. Unset/empty and
+  `api.anthropic.com` classify as `anthropic`; malformed URLs classify as `remote`.
+  Loopback (`localhost`, `*.localhost`, 127/8, `::1`), `0.0.0.0`, `host.docker.internal`,
+  10/8, 172.16/12, 192.168/16, 169.254/16 and IPv6 fc00::/7 classify as `local`.
+  Local turns and their subagents cost zero, `priced` with `rateSource: "local"`, and never
+  register a guessed model or need estimate correction. A `:tag` model name alone proves
+  nothing. Codex's existing ollama/lmstudio/oss provider detection is unchanged.
+  **Remaining limit:** transcripts contain no endpoint; evidence comes only from hook env or
+  settings, which cannot reconstruct historical endpoint changes.
+
+Stored `serviceTier` and `endpoint` survive blank re-reads. Ingest supplies a `pricingForTurn`
+lookup to the parsers, keyed by provider/session/turn in the same session-home store used by
+upsert. They resolve this evidence before costing each request, so changed token counts and
+`--reprice` also use it. Live hook evidence wins for the last turn, stored evidence comes next,
+and Claude settings are the fallback. Settings or today's Codex config do not rewrite stored
+history. Endpoint evidence that a turn ran locally also replaces an older nonzero cost.
 
 - **Codex long-context scope.** OpenAI's gpt-5.5 note says prompts above 272K are priced at
   2x input and 1.5x output for the full session. Here the threshold applies per request as

@@ -33,7 +33,7 @@ function cachedRates() {
   } catch { rates = {}; signature = null; }
   return rates;
 }
-export function lookup(modelId, providers = null) {
+export function lookup(modelId, providers = null, promptSize = 0) {
   const id = String(modelId || "").trim().toLowerCase();
   const platform = platformOf(id);
   const candidates = providers || (platform === "google-vertex-anthropic"
@@ -43,7 +43,9 @@ export function lookup(modelId, providers = null) {
   for (const provider of candidates) {
     const r = table[provider]?.[id];
     if (r && Number.isFinite(r.input) && r.input >= 0 && Number.isFinite(r.output) && r.output >= 0) {
-      return { ...r, provider, rateSource: "models.dev", windowKnown: r.contextMax > 0 };
+      // Context boundaries are exclusive; cache prices belong to the selected tier.
+      const tier = Array.isArray(r.tiers) ? r.tiers.filter((t) => promptSize > t.size).at(-1) : null;
+      return { ...r, ...tier, provider, rateSource: "models.dev", windowKnown: r.contextMax > 0 };
     }
   }
   return null;

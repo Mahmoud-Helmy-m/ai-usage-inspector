@@ -98,7 +98,7 @@ export async function mutateJson(file, fn, fallback = {}) {
   });
 }
 
-function readNdjson(file) {
+export function readNdjson(file) {
   let text = "";
   try {
     text = fs.readFileSync(file, "utf8");
@@ -246,6 +246,8 @@ export function tokenCount(r) {
 }
 
 function preserveComputedCost(next, previous, preserveRuns = true) {
+  // Endpoint evidence rules out API billing, including an older guessed amount.
+  if (next?.endpoint === "local" && next.cost?.rateSource === "local") return next;
   if (process.env.AI_USAGE_REPRICE === "1") return next;
   if (!previous || !previous.cost || !next || !next.cost) return next;
   if (!COMPUTED_COST_SOURCES.has(previous.cost.source)) return next;

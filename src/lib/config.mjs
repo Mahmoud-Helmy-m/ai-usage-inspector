@@ -276,8 +276,9 @@ export function preserveStoredFields(next, previous, fields) {
   if (nested.length && Array.isArray(out.subagents) && Array.isArray(previous.subagents)) {
     out.subagents = restoreRuns(out.subagents, previous.subagents, nested);
   }
-  // Only a hook can see the effort setting; a sweep reads the transcript alone,
-  // and its blank used to replace what the hook had recorded.
-  if (out.effortLevel == null && previous.effortLevel != null) out.effortLevel = previous.effortLevel;
+  // Transcripts omit hook-time settings. A sweep's blank must not erase that evidence.
+  for (const key of ["effortLevel", "serviceTier", "endpoint"]) {
+    if (out[key] == null && previous[key] != null) out[key] = previous[key];
+  }
   return out;
 }

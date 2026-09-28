@@ -1,4 +1,4 @@
-// Official OpenAI Standard prices, supplemented only for missing ids by models.dev.
+// Official OpenAI Standard, Fast and Flex prices, supplemented only for missing ids by models.dev.
 // Self-contained: install copies this module beside the bundled viewer.
 import fs from "node:fs";
 import os from "node:os";
@@ -13,21 +13,22 @@ export const LONG_CONTEXT_THRESHOLD = 272_000;
 const price = (n) => typeof n === "number" && Number.isFinite(n) && n >= 0;
 const parsePrice = (cell) => /^\$\s*\d+(?:\.\d+)?$/.test(cell) ? Number(cell.replace(/[$\s]/g, "")) : null;
 
-/** Only the Standard table: other service tiers have different prices. */
+/** Each service table uses the same columns; Batch is deliberately excluded. */
 export function parsePricingMarkdown(md) {
-  const rates = {};
-  let standard = false, table = false, started = false;
+  const tables = { standard: {}, fast: {}, flex: {} };
+  let service = null, table = false, started = false;
   for (const raw of String(md || "").split("\n")) {
     const line = raw.trim();
     if (/^#{1,6}\s/.test(line)) {
-      standard = /^###\s+Standard pricing data\s*$/i.test(line);
+      service = /^###\s+(Standard|Fast|Flex) pricing data\s*$/i.exec(line)?.[1].toLowerCase() || null;
       table = false;
       started = false;
       continue;
     }
-    if (!standard) continue;
+    if (!service) continue;
+    const rates = tables[service];
     if (!line.startsWith("|")) {
-      if (started) standard = false;
+      if (started) service = null;
       continue;
     }
     const cells = line.split("|").slice(1, -1).map((c) => c.trim());
@@ -51,6 +52,10 @@ export function parsePricingMarkdown(md) {
     const threshold = /\(<\s*(\d+(?:\.\d+)?)K\b/i.exec(cells[0]);
     rates[id] = { ...short, long: long ? { ...long, threshold: threshold ? Number(threshold[1]) * 1000 : LONG_CONTEXT_THRESHOLD } : null };
   }
+  const rates = tables.standard;
+  for (const [id, rate] of Object.entries(rates)) {
+    for (const service of ["fast", "flex"]) if (tables[service][id]) rate[service] = tables[service][id];
+  }
   return rates;
 }
 
@@ -69,7 +74,15 @@ export function parseModelsDev(json) {
   for (const [id, m] of Object.entries(models)) {
     const c = m && m.cost;
     if (!c || !price(c.input) || !price(c.output)) continue;
+    // Kept here too: this sidecar can refresh without the shared cache beside it.
+    const tiers = (Array.isArray(c.tiers) ? c.tiers : [])
+      .filter((r) => r?.tier?.type === "context" && price(r.tier.size) && r.tier.size > 0 && price(r.input) && price(r.output))
+      .map((r) => ({ size: r.tier.size, input: r.input, output: r.output,
+        cacheRead: price(r.cache_read) ? r.cache_read : null,
+        cacheWrite: price(r.cache_write) ? r.cache_write : null }))
+      .sort((a, b) => a.size - b.size);
     rates[id] = {
+      ...(tiers.length ? { tiers } : {}),
       input: c.input,
       cachedInput: price(c.cache_read) ? c.cache_read : c.input * 0.1,
       // No published cache rate: the 10% is our guess, and the cost built from
@@ -100,8 +113,8 @@ function writeCache(file, data) {
 }
 
 /** Cached rate map or null. Sync, never throws. */
-// v3 records official sources, cache writes and long-context tiers.
-export const CACHE_SCHEMA = 3;
+// v4 adds Fast/Flex tables; old caches cannot tell absent rates from unparsed tiers.
+export const CACHE_SCHEMA = 4;
 
 /** Rates from the on-disk cache, or null if there is no usable one. */
 export function readCachedRates(file = CACHE_FILE) {
@@ -120,7 +133,8 @@ export function diffRates(oldRates, nextRates) {
     if (!y) changes.push({ id, type: "removed", from: x });
     else if (!x) changes.push({ id, type: "added", to: y });
     else if (["input", "output", "cachedInput", "cachedGuessed", "cacheWrite"].some((k) => x[k] !== y[k])
-      || ["input", "output", "cachedInput", "cacheWrite", "threshold"].some((k) => x.long?.[k] !== y.long?.[k]))
+      || ["input", "output", "cachedInput", "cacheWrite", "threshold"].some((k) => x.long?.[k] !== y.long?.[k])
+      || ["fast", "flex", "tiers"].some((k) => JSON.stringify(x[k]) !== JSON.stringify(y[k])))
       changes.push({ id, type: "changed", from: x, to: y });
   }
   return changes;
@@ -172,6 +186,7 @@ export async function refreshPricing({
       supplemental = Object.fromEntries(Object.entries(shared.rates.openai || {}).map(([id, r]) => [id, {
         input: r.input, output: r.output, cachedInput: r.cacheRead ?? r.input * 0.1,
         cachedGuessed: r.cacheRead == null, cacheWrite: r.cacheWrite, contextMax: r.contextMax,
+        ...(r.tiers ? { tiers: r.tiers } : {}),
       }]));
     } else {
       const extra = await fetchImpl(modelsUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) });

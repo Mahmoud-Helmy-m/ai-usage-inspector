@@ -1,4 +1,4 @@
-// OpenAI Standard API pricing, verified 2026-09. USD per 1,000,000 tokens.
+// OpenAI API pricing, verified 2026-09. USD per 1,000,000 tokens.
 // Source: developers.openai.com/api/docs/pricing.md; cached rates override this table.
 import { M, zeroCost } from "../../lib/pricing-core.mjs";
 import { readCachedRates, LONG_CONTEXT_THRESHOLD } from "./remote-pricing.mjs";
@@ -29,6 +29,17 @@ const TABLE = {
   "gpt-5.3-codex": model(1.75, 0.175, 14, 400_000),
   "chat-latest": model(5, 0.5, 30, 400_000),
 };
+
+Object.assign(TABLE["gpt-6-astra"], {
+  fast: model(20, 2, 100, 1_050_000, 25, tier(40, 4, 150, 50)),
+  flex: model(5, 0.5, 25, 1_050_000, 6.25, tier(10, 1, 37.5, 12.5)),
+});
+TABLE["gpt-6-sol"].fast = model(4, 0.4, 20, 1_050_000, 5, tier(8, 0.8, 30, 10));
+TABLE["gpt-5.6-sol"].fast = model(8, 0.8, 40, 1_050_000, 10, tier(16, 1.6, 60, 20));
+Object.assign(TABLE["gpt-5.5"], {
+  fast: model(12.5, 1.25, 75, 1_050_000),
+  flex: model(2.5, 0.25, 15, 1_050_000, null, tier(5, 0.5, 22.5)),
+});
 
 // Unknown Codex models default to the codex-tier rate. That rate is a guess, so
 // costs derived from it are labelled "estimated" rather than "priced".
@@ -61,6 +72,11 @@ export function applyRemoteRates(rates) {
         : (TABLE[id] && TABLE[id].contextMax) || FALLBACK.contextMax;
     const long = r.long && ["input", "cachedInput", "output", "threshold"].every((k) => price(r.long[k])) ? { ...r.long } : null;
     OVERRIDES[id] = { ...model(r.input, cached, r.output, ctx, r.cacheWrite ?? null, long), cachedGuessed: !cachedKnown };
+    for (const service of ["fast", "flex"]) {
+      const rate = r[service] || TABLE[id]?.[service];
+      if (rate && price(rate.input) && price(rate.output)) OVERRIDES[id][service] = { ...rate };
+    }
+    if (r.tiers) OVERRIDES[id].tiers = r.tiers;
     if (r.source === "models.dev") OVERRIDES[id].rateSource = "models.dev";
   }
 }
@@ -78,19 +94,23 @@ export function normalize(modelId) {
 
 export function knownModel(modelId) {
   const id = normalize(modelId);
-  return Object.hasOwn(OVERRIDES, id) || Object.hasOwn(TABLE, id);
+  return Object.hasOwn(OVERRIDES, modelId) || Object.hasOwn(OVERRIDES, id) || Object.hasOwn(TABLE, id);
 }
 
-export function modelInfo(modelId) {
+export function modelInfo(modelId, promptSize = 0) {
   const id = normalize(modelId);
-  const override = OVERRIDES[id];
+  const override = OVERRIDES[modelId] || OVERRIDES[id];
   if (override && override.rateSource !== "models.dev") return override;
   if (TABLE[id]) return TABLE[id];
   // A shared refresh may fill a missing cache price even when OpenAI returns 304
   // and its supplemental copy is unchanged. Observe that price before the old copy.
-  const extra = lookup(modelId) || lookup(modelId, ["openai"]) || lookup(id, ["openai"]);
+  const extra = lookup(modelId, null, promptSize) || lookup(modelId, ["openai"], promptSize) || lookup(id, ["openai"], promptSize);
   if (extra?.provider === "openai") return { ...extra,
-    cachedInput: extra.cacheRead ?? extra.input * 0.1, cachedGuessed: extra.cacheRead == null };
+    cachedInput: extra.cacheRead ?? extra.input * (extra.size ? 1 : 0.1), cachedGuessed: extra.cacheRead == null };
+  if (!extra && override) {
+    const tier = override.tiers?.filter((r) => promptSize > r.size).at(-1);
+    return tier ? { ...override, ...tier, cachedInput: tier.cacheRead ?? tier.input, cachedGuessed: tier.cacheRead == null } : override;
+  }
   // Another lab's model: a missing cache-hit price bills hits at input, flagged as a guess.
   return extra ? { ...extra, cachedInput: extra.cacheRead ?? extra.input, cachedGuessed: extra.cacheRead == null }
     : override || FALLBACK;
@@ -107,11 +127,14 @@ export function contextMax(modelId) {
  *   output — output tokens (already includes reasoning tokens)
  * Returns the shared cost object { input, output, cacheRead, cacheWrite, total }.
  */
-export function costOf(modelId, tokens, { long = false, modelProvider = null } = {}) {
+export function costOf(modelId, tokens, { long = false, modelProvider = null, serviceTier = null, promptSize = 0 } = {}) {
   if (["ollama", "lmstudio", "oss"].includes(modelProvider)) return { ...zeroCost(), source: "priced", rateSource: "local" };
   if (!tokens) return { ...zeroCost(), source: "priced" };
-  const info = modelInfo(modelId);
-  const r = long && info.long ? info.long : info;
+  const info = modelInfo(modelId, promptSize);
+  const service = serviceTier === "fast" || serviceTier === "flex" ? serviceTier : null;
+  const selected = (service && info[service]) || info;
+  const missingTier = service && !info[service];
+  const r = long && selected.long ? selected.long : selected;
   const input = (Math.max(0, tokens.input || 0) * r.input) / M;
   const cacheRead = (Math.max(0, tokens.cached || 0) * r.cachedInput) / M;
   const output = (Math.max(0, tokens.output || 0) * r.output) / M;
@@ -119,7 +142,7 @@ export function costOf(modelId, tokens, { long = false, modelProvider = null } =
   // No tokens cost nothing at any rate: nothing about them is a guess. Before 2.11.1 such a
   // turn could be labelled estimated; `relabels` lets the store drop that label while keeping
   // the amount (Codex costs carry no rate revision, so any value works).
-  const guessedRate = (!!r.estimated && used) || (!!r.cachedGuessed && (tokens.cached || 0) > 0);
+  const guessedRate = ((!!r.estimated || missingTier) && used) || (!!r.cachedGuessed && (tokens.cached || 0) > 0);
   if (guessedRate && used) {
     const raw = String(modelId || "").trim().toLowerCase();
     const id = providerForId(raw) ? raw : normalize(raw);

@@ -162,7 +162,7 @@ for (const provider of ["google-vertex-anthropic", "google-vertex"]) test(`Verte
   assert.equal(claudePrices.contextMax(id), 1e6);
 });
 
-test("models.dev trims providers and fields, validates prices and uses base tiers", () => {
+test("models.dev trims providers and fields, validates prices and drops malformed tiers", () => {
   const all = Object.fromEntries(remote.PROVIDERS.map((id) => [id, { models: { valid: entry(1, 4, { tiers: [{ input: 999 }] }), bad: entry(-1), nan: entry(NaN) }, env: ["SECRET"] }]));
   for (const id of ["alibaba-token-plan", "minimax-coding-plan", "alibaba-coding-plan", "iflowcn", "zai-coding-plan", "reseller"]) all[id] = { models: { valid: entry(0, 0) } };
   const r = remote.parseModelsDev(all);
@@ -430,7 +430,7 @@ for (const status of ["fresh", "updated", "unchanged", "not-modified"]) test(`wo
 
 test("models.dev refresh is wired into install, sync and a self-contained viewer sidecar", async (t) => {
   const dir = temp(t); copyViewerSidecars(dir);
-  assert.equal(VIEWER_VERSION, "37");
+  assert.equal(VIEWER_VERSION, "38");
   assert.equal(new Set(VIEWER_SIDECARS.map(([, name]) => name)).size, VIEWER_SIDECARS.length);
   const mod = await import(pathToFileURL(path.join(dir, "remote-pricing-modelsdev.mjs")));
   assert.equal((await mod.refreshPricing({ file: path.join(dir, "cache.json") })).status, "no-fetch");

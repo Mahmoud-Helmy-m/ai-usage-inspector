@@ -8,6 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { hookPricing } from "./lib/hook-pricing.mjs";
+
 const MAX_STDIN_BYTES = 1024 * 1024;
 // Idle cap: how long to wait with NO new data before giving up. Reset by every
 // chunk, so a payload arriving in pieces is never truncated mid-stream, while a
@@ -113,7 +115,11 @@ export async function runLauncher({
     const { raw, truncated } = input === undefined
       ? await readStdinBounded()
       : { raw: String(input), truncated: false };
+    let payload;
+    try { payload = JSON.parse(raw); } catch {}
+    const pricing = hookPricing(provider, payload?.cwd || cwd);
     writeSpool({
+      pricing,
       schema: 1,
       provider,
       cwd,

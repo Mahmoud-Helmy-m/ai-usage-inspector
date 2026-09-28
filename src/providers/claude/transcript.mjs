@@ -17,6 +17,7 @@ import { vendorOf } from "../../lib/vendors/index.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { settingsEvidence } from "../../lib/hook-pricing.mjs";
 import { costOf, contextMax, modelInfo, zeroCost, addCost } from "./pricing.mjs";
 import { subagentsDir } from "../../lib/paths.mjs";
 
@@ -360,20 +361,20 @@ function attachRuns(runs, turns, results) {
 // A run's own share, with the runs it launched beneath it. `seen` spans the whole
 // transcript, so a run can never be emitted — or counted — twice; `messages`
 // collects every message of the tree for the owning turn's totals.
-function runRecord(run, seen, messages) {
+function runRecord(run, seen, messages, endpoint) {
   seen.add(run);
   messages.push(...run.messages);
   const usage = emptyTokens();
-  let cost = zeroCost();
+  let cost = endpoint === "local" ? costOf(null, null, { endpoint }) : zeroCost();
   for (const m of run.messages) {
     addUsageTokens(usage, m.usage);
-    cost = addCost(cost, costOf(m.model, m.usage));
+    cost = addCost(cost, costOf(m.model, m.usage, { endpoint }));
   }
   const { toolCalls, thinking } = countBlocks(run.messages);
   const last = run.messages[run.messages.length - 1];
   const endTs = (last && last.ts) || run.endTs || run.ts;
   const subagents = [];
-  for (const child of run.children) if (!seen.has(child)) subagents.push(runRecord(child, seen, messages));
+  for (const child of run.children) if (!seen.has(child)) subagents.push(runRecord(child, seen, messages, endpoint));
   return {
     agentId: run.agentId,
     agentType: run.meta.agentType || run.call.subagent_type || run.result.agentType || null,
@@ -457,26 +458,50 @@ export function buildTurns(transcriptPath, opts = {}) {
   const stamped = entries.find((e) => e && e.timestamp);
   const copiedBefore = stamped ? Date.parse(stamped.timestamp) - 60 * 1000 : null;
   const session = { seenRuns: new Set(), copiedBefore, transcriptFirstTs: stamped && Number.isFinite(Date.parse(stamped.timestamp)) ? stamped.timestamp : null };
-  return turns.map((t) => finalizeTurn(t, opts, {
+  const identities = turns.map((t) => ({
+    provider: "claude", sessionId: t.session, cwd: t.promptEntry.cwd,
+    id: turnId(t),
+    copied: copiedBefore !== null && Date.parse(t.promptEntry.timestamp) < copiedBefore,
+  }));
+  // Settings read now count only for turns that ran after every settings file last changed.
+  const evidence = new Map();
+  const endpointAt = (cwd, ts) => {
+    if (!evidence.has(cwd)) evidence.set(cwd, settingsEvidence(cwd));
+    const { endpoint, changedAt } = evidence.get(cwd);
+    const at = Date.parse(ts);
+    return endpoint && Number.isFinite(at) && changedAt <= at ? endpoint : null;
+  };
+  return turns.map((t, i) => finalizeTurn(t, { ...opts,
+    endpoint: (i === turns.length - 1 ? opts.hookPricing?.endpoint : null)
+      || opts.pricingForTurn?.(identities[i], identities)?.endpoint
+      || endpointAt(t.promptEntry.cwd, t.promptEntry.timestamp),
+  }, {
     ...session, name: names.get(t.session) || null, title: titles.get(t.session) || null,
   })).filter(Boolean);
 }
 
+function turnId(t) {
+  const e = t.promptEntry;
+  return e.uuid || (e.sessionId ? `${e.sessionId}:${e.promptId || e.timestamp}` : null)
+    || `${t.session || "unknown"}:${e.promptId || e.timestamp}:${t.index}`;
+}
+
 function finalizeTurn(t, opts, session) {
+  const endpoint = opts.endpoint;
   const e = t.promptEntry;
   const main = t.main;
   const runMessages = [];
   const subagents = [];
   for (const run of t.runs) {
-    if (!session.seenRuns.has(run)) subagents.push(runRecord(run, session.seenRuns, runMessages));
+    if (!session.seenRuns.has(run)) subagents.push(runRecord(run, session.seenRuns, runMessages, endpoint));
   }
 
   // Token totals: the main thread plus every run beneath this turn, each once.
   const tokens = emptyTokens();
-  let cost = zeroCost();
+  let cost = endpoint === "local" ? costOf(null, null, { endpoint }) : zeroCost();
   for (const m of main.concat(runMessages)) {
     addUsageTokens(tokens, m.usage);
-    cost = addCost(cost, costOf(m.model, m.usage));
+    cost = addCost(cost, costOf(m.model, m.usage, { endpoint }));
   }
 
   const last = main[main.length - 1];
@@ -499,15 +524,13 @@ function finalizeTurn(t, opts, session) {
     startTs && firstAsstTs ? Math.max(0, Date.parse(firstAsstTs) - Date.parse(startTs)) : 0;
 
   return {
-    id:
-      e.uuid
-      || (e.sessionId ? `${e.sessionId}:${e.promptId || startTs}` : null)
-      || `${t.session || "unknown"}:${e.promptId || startTs}:${t.index}`,
+    id: turnId(t),
     // Only for the one shape an older version could not identify: no uuid and no
     // entry-level session, which it stored as "undefined:<promptId or ts>". The
     // store uses this to replace that row instead of leaving it beside this one.
     ...(!e.uuid && !e.sessionId ? { legacyId: `undefined:${e.promptId || startTs}` } : {}),
     provider: "claude",
+    ...(endpoint ? { endpoint } : {}),
     transcriptFirstTs: session.transcriptFirstTs,
     branchResolution: "unresolved",
     // A compaction summary is written as a user turn ("This session is being

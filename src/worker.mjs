@@ -175,7 +175,8 @@ export async function processEnvelope(envelope) {
     if (norm && norm.rescan && typeof provider.discoverTranscripts === "function") {
       await rescan(provider, norm);
     } else {
-      await ingest(provider, envelope.raw);
+      // Older queued events have no record-time evidence; today's config cannot supply it.
+      await ingest(provider, envelope.raw, envelope.pricing || {});
     }
     return { permanent: false };
   } finally {

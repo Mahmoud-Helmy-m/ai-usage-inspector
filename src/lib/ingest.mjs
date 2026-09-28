@@ -4,9 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { upsertSession, ABORT } from "./store.mjs";
+import { upsertSession, ABORT, readNdjson, tombstoneKey } from "./store.mjs";
 import { workspaceFile, workspaceLabel } from "./paths.mjs";
 import { ensureProjectConfig, isEnabled, applyFieldSelection, preserveStoredFields } from "./config.mjs";
+import { hookPricing } from "./hook-pricing.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,7 +33,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 36: the Codex price sidecar reads OpenAI's official page into a new cache schema; an older
 //     copy would keep rewriting that cache in the old one.
 // 37: shared models.dev prices and Claude fast-mode pricing sidecars.
-export const VIEWER_VERSION = "37";
+// 38: Codex service tiers and models.dev context tiers.
+export const VIEWER_VERSION = "38";
 
 // A project gets viewer/ and nothing else — no src/ tree beside it — so the
 // modules the bundled dashboard imports are copied in next to it, under the
@@ -234,11 +236,12 @@ async function storeTurns(turns, fallbackCwd, sessionId, precondition = null, tr
  * Ingest one provider's hook event (raw stdin string). Best-effort: never
  * throws to the caller. Returns the number of turns written.
  */
-export async function ingest(provider, raw) {
+export async function ingest(provider, raw, pricing) {
   const { sessionId, cwd, transcriptPath, opts } = provider.normalizePayload(raw);
   if (!transcriptPath || !cwd) return 0;
 
-  return ingestTranscript(provider, { transcriptPath, cwd, sessionId, opts });
+  return ingestTranscript(provider, { transcriptPath, cwd, sessionId,
+    opts: { ...opts, hookPricing: pricing || hookPricing(provider.id, cwd) } });
 }
 
 /**
@@ -299,7 +302,19 @@ export async function ingestTranscript(provider, { transcriptPath, cwd, sessionI
   // the session with its older snapshot. If the file moved under us, drop this
   // pass: the scan mark does not advance, so the next sweep re-reads it whole.
   const before = transcriptStamp(provider, transcriptPath);
-  const turns = await provider.buildTurns(transcriptPath, opts || {});
+  // Resolve billing metadata before pricing, including --reprice and token growth.
+  // Use the same session home and composite identity as the eventual upsert.
+  const stored = new Map(), homes = new Map();
+  const pricingForTurn = (row, peers) => {
+    if (!homes.has(row.sessionId)) homes.set(row.sessionId, homeFolder(peers.filter((r) => r.sessionId === row.sessionId), cwd));
+    const home = homes.get(row.sessionId);
+    if (!home) return {};
+    const file = workspaceFile(home);
+    if (!stored.has(file)) stored.set(file, new Map(readNdjson(file).records.map((r) => [tombstoneKey(r), r])));
+    const prior = stored.get(file).get(tombstoneKey(row));
+    return { serviceTier: prior?.serviceTier, endpoint: prior?.endpoint };
+  };
+  const turns = await provider.buildTurns(transcriptPath, { ...opts, pricingForTurn });
   if (before !== null && transcriptStamp(provider, transcriptPath) !== before) {
     const err = new Error("transcript changed while being parsed");
     err.scanStatus = "locked";

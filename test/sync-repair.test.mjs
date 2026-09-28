@@ -194,7 +194,7 @@ test("sync prices a stored estimate once rates another process fetched know its 
 
   // What a dashboard start leaves behind: the rate, fetched by someone else.
   const cache = path.join(home, ".ai-usage-inspector", "pricing-codex.json");
-  fs.writeFileSync(cache, JSON.stringify({ schema: 3, fetchedAt: Date.now(), attemptedAt: Date.now(),
+  fs.writeFileSync(cache, JSON.stringify({ schema: 4, fetchedAt: Date.now(), attemptedAt: Date.now(),
     rates: { "gpt-future-sync-8": { input: 3, cachedInput: 0.3, output: 12, source: "openai" } } }));
   sync();
   assert.equal(row().cost.source, "priced");

@@ -6,7 +6,7 @@
 
 ![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-success)
-![Tests](https://img.shields.io/badge/tests-520-success)
+![Tests](https://img.shields.io/badge/tests-601-success)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
@@ -254,7 +254,7 @@ and removed by `--uninstall`. Your prompts and costs never leave your machine: n
 sends anywhere contains them. The only network requests it makes are for public price lists —
 [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing.md) and
 [models](https://platform.claude.com/docs/en/about-claude/models/overview.md),
-[OpenAI Standard pricing](https://developers.openai.com/api/docs/pricing.md),
+[OpenAI pricing](https://developers.openai.com/api/docs/pricing.md),
 [Cursor models and pricing](https://cursor.com/docs/models-and-pricing.md), and
 [z.ai pricing](https://docs.z.ai/guides/overview/pricing.md). [models.dev](https://models.dev/api.json)
 is a community dataset used for OpenAI ids missing from OpenAI's page, Claude on AWS Bedrock or
@@ -262,8 +262,13 @@ Google Vertex (the platform's own price, regional uplift included), and other la
 through Claude Code or Codex (Kimi, DeepSeek, Qwen, MiniMax, Grok, Gemini, Mistral, OpenRouter
 ids). Only the lab's own listing is used — never a reseller's or a subscription plan's — and a cost
 taken from it records `rateSource: "models.dev"`; a model its lab does not list stays estimated.
-Codex models run locally (Ollama, LM Studio) cost nothing. Claude fast mode uses its published
-premium rates, including scaled cache prices. These are fetched at dashboard start
+Codex models run locally (Ollama, LM Studio) cost nothing. Claude Code models also cost zero when
+its hook environment or settings identify a local endpoint; only a classification is saved, never
+the URL or credentials. Codex hooks capture Fast/Flex from the top-level config setting (Priority
+means Fast); historical or sweep-only turns without a captured tier use Standard, and missing
+tier rates stay estimated. models.dev context tiers apply per request, with prompts exactly at a
+threshold keeping the lower rate. Claude fast mode uses its published premium rates, including
+scaled cache prices. These are fetched at dashboard start
 (`--no-pricing-refresh` disables that), during `install` and `sync`, and by the background worker
 with a 12-hour ttl, shortened to one hour for a new guessed model. Models still unpriced after a
 successful check stay on the 12-hour schedule. Failed requests back off for

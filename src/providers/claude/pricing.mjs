@@ -143,20 +143,21 @@ export function knownModel(modelId) {
   return Object.hasOwn(OVERRIDES, id) || Object.hasOwn(TABLE, id);
 }
 
-export function modelInfo(modelId) {
+export function modelInfo(modelId, promptSize = 0) {
   // Unknown GLM keeps the provider's explicit estimated fallback, never its window guess.
   if (isGlm(modelId)) return zaiModelInfo(modelId) || { ...FALLBACK, contextMax: null };
   const id = normalize(modelId);
   const platform = platformOf(modelId);
-  const extra = platform || !id.startsWith("claude-") ? lookup(modelId) : null;
+  const extra = platform || !id.startsWith("claude-") ? lookup(modelId, null, promptSize) : null;
   if (extra) {
     const standard = OVERRIDES[id] || TABLE[id];
     // Claude on Bedrock or Vertex keeps Anthropic's cache multipliers (5m write 1.25x, 1h write
     // 2x, the model's own hit ratio) on the platform's input price; models.dev lists only one
     // write price, which would bill 1h writes as 5m ones. Other vendors' models use what the
     // lab publishes; a missing cache-hit price stays null, so hits are billed at input and
-    // labelled estimated rather than passed off as looked up.
-    if (platform && standard && standard.input > 0) {
+    // labelled estimated rather than passed off as looked up. Explicit context tiers
+    // also use their own cache prices, never a ratio inherited from the base tier.
+    if (platform && !extra.size && standard && standard.input > 0) {
       const scale = extra.input / standard.input;
       return { ...extra, cacheWrite5m: standard.cacheWrite5m * scale, cacheWrite1h: standard.cacheWrite1h * scale,
         cacheRead: standard.cacheRead * scale, contextMax: standard.contextMax, windowKnown: !!standard.windowKnown };
@@ -200,9 +201,12 @@ export function knownContextMax(modelId) {
  * Cost (USD) of one assistant message's usage, priced at that message's model.
  * `usage` is the Anthropic usage object from the transcript.
  */
-export function costOf(modelId, usage) {
+export function costOf(modelId, usage, { endpoint = null } = {}) {
+  if (endpoint === "local") return { ...zeroCost(), source: "priced", rateSource: "local" };
   if (!usage) return { ...zeroCost(), source: "priced" };
-  let r = modelInfo(modelId);
+  const promptSize = (usage.input_tokens || 0) + (usage.cache_read_input_tokens || 0)
+    + (usage.cache_creation_input_tokens ?? ((usage.cache_creation?.ephemeral_5m_input_tokens || 0) + (usage.cache_creation?.ephemeral_1h_input_tokens || 0)));
+  let r = modelInfo(modelId, promptSize);
   const fast = usage.speed === "fast" && !platformOf(modelId);
   const fastPriced = fast && r.fast && r.input > 0;
   if (fastPriced) {

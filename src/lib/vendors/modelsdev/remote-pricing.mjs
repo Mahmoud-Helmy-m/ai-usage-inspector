@@ -21,7 +21,14 @@ export function parseModelsDev(json) {
     for (const [id, m] of Object.entries(models)) {
       const c = m?.cost;
       if (!c || !price(c.input) || !price(c.output)) continue;
+      const tiers = (Array.isArray(c.tiers) ? c.tiers : [])
+        .filter((r) => r?.tier?.type === "context" && price(r.tier.size) && r.tier.size > 0 && price(r.input) && price(r.output))
+        .map((r) => ({ size: r.tier.size, input: r.input, output: r.output,
+          cacheRead: price(r.cache_read) ? r.cache_read : null,
+          cacheWrite: price(r.cache_write) ? r.cache_write : null }))
+        .sort((a, b) => a.size - b.size);
       kept[id.toLowerCase()] = { input: c.input, output: c.output,
+        ...(tiers.length ? { tiers } : {}),
         cacheRead: price(c.cache_read) ? c.cache_read : null,
         cacheWrite: price(c.cache_write) ? c.cache_write : null,
         contextMax: Number.isFinite(m.limit?.context) && m.limit.context > 0 ? m.limit.context : null };

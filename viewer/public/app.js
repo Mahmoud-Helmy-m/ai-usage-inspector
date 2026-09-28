@@ -1568,7 +1568,7 @@ async function openDrawer(id, provider, session) {
   if (e.gitBranch) meta.push(`<span>${esc(e.gitBranch)}</span>`);
   if (e.entrypoint) meta.push(`<span title="platform the prompt was sent from">⌂ ${esc(e.entrypoint)}</span>`);
   if (e.cliVersion) meta.push(`<span>v${esc(e.cliVersion)}</span>`);
-  if (e.serviceTier || e.speed) meta.push(`<span>${esc(e.serviceTier || "")}/${esc(e.speed || "")}</span>`);
+  if (e.serviceTier || e.speed) meta.push(`<span>${[e.serviceTier, e.speed].filter(Boolean).map(esc).join("/")}</span>`);
   if (e.branchOf) meta.push(`<span>branched from ${loadedSessionLabel(e, e.branchOf)}</span>`);
   if (e.agent) {
     meta.push(`<span>${valueHtml(e.agent.kind)} · ${valueHtml(e.agent.nickname)}</span>`,

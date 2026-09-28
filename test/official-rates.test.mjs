@@ -53,7 +53,7 @@ const temp = (t) => {
 };
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-10, `${a} != ${b}`);
 
-test("OpenAI parses only Standard, including tiers, cache writes and explicit no-discount cells", () => {
+test("OpenAI Standard is unchanged by unrelated service rows, including tiers, cache writes and dash cells", () => {
   const other = ["Batch", "Flex", "Fast"].map((name) => PAGE.replace("Standard", name).replaceAll("gpt-", `${name.toLowerCase()}-`).replaceAll("$10.00", "$999.00")).join("\n");
   const competing = PAGE.replace("Standard", "Batch").replaceAll("$10.00", "$999.00");
   const rates = openai.parsePricingMarkdown(competing + other + PAGE + other + competing);
@@ -100,7 +100,7 @@ test("OpenAI supplements only missing ids after official success and records bot
   const cache = JSON.parse(fs.readFileSync(file));
   assert.deepEqual(cache.sources, { openai: openai.PRICING_URL, "models.dev": openai.MODELS_URL });
   assert.equal(cache.attemptedAt, 100000000);
-  assert.equal(cache.schema, 3);
+  assert.equal(cache.schema, 4);
   fs.writeFileSync(file, JSON.stringify({ ...cache, schema: 2 }));
   assert.equal(openai.readCachedRates(file), null);
 });

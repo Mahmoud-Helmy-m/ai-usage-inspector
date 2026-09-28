@@ -358,10 +358,17 @@ export function buildTurns(rolloutPath, opts = {}) {
     turns[i].endTotal = i + 1 < turns.length ? turns[i + 1].startTotal : runningTotal;
   }
 
+  const identities = turns.map((t, index) => {
+    const base = t.turnId || `${sessionId || "codex"}:${index}`;
+    return { provider: "codex", sessionId, cwd,
+      id: continuation && !UUID_RE.test(base) ? `${base}@${continuation}` : base };
+  });
   return turns
     .map((t, i) =>
       finalizeTurn(t, {
         sessionId,
+        serviceTier: (i === turns.length - 1 ? opts.hookPricing?.serviceTier : null)
+          || opts.pricingForTurn?.(identities[i], identities)?.serviceTier || null,
         modelProvider: meta.model_provider,
         sessionName: nameFromIndex,
         hierarchy,
@@ -398,12 +405,13 @@ function finalizeTurn(t, ctx) {
     // Incomplete or inconsistent request events must never exceed cumulative deltas.
     // Keep complete requests that fit, then price the unaccounted remainder short.
     if (Object.keys(counts).some((k) => counts[k] < 0 || counts[k] > remaining[k])) continue;
-    const tier = modelInfo(request.model).long;
-    cost = addCost(cost, costOf(request.model, counts, { long: !!tier && request.input > tier.threshold, modelProvider: ctx.modelProvider }));
+    const info = modelInfo(request.model);
+    const tier = (info[ctx.serviceTier] || info).long;
+    cost = addCost(cost, costOf(request.model, counts, { long: !!tier && request.input > tier.threshold, modelProvider: ctx.modelProvider, serviceTier: ctx.serviceTier, promptSize: request.input }));
     for (const k of Object.keys(counts)) remaining[k] -= counts[k];
   }
   // A turn with no tokens at all is still priced once, so its cost says how it was labelled.
-  if (Object.values(remaining).some((n) => n > 0) || !t.requests.length) cost = addCost(cost, costOf(model, remaining, { modelProvider: ctx.modelProvider }));
+  if (Object.values(remaining).some((n) => n > 0) || !t.requests.length) cost = addCost(cost, costOf(model, remaining, { modelProvider: ctx.modelProvider, serviceTier: ctx.serviceTier }));
 
   const ctxTokens = t.lastCtxInput || d.input;
   const ctxMax = t.ctxWindow || contextMax(model);
@@ -443,7 +451,7 @@ function finalizeTurn(t, ctx) {
     responseChars: t.response.length,
     model,
     vendor: vendorOf(model),
-    serviceTier: null,
+    serviceTier: ctx.serviceTier,
     speed: null,
     permissionMode: ctx.permissionMode || "default",
     effortLevel: t.effort || null,
