@@ -528,8 +528,8 @@ transcripts cannot be repriced from a turn's aggregate counters when models/runs
 
 ## Pricing refresh
 
-Per-model rates ship built-in, and when a project tracks cost each viewer start refreshes
-them:
+Per-model rates ship built-in and are refreshed from these sources by the worker, `install`,
+`sync` and the dashboard, each cache on its own twelve-hour ttl:
 
 | Provider / vendor | Source | Cache |
 |---|---|---|
@@ -540,10 +540,17 @@ them:
 | Other labs and platforms | [models.dev](https://models.dev/api.json), a community dataset | `~/.ai-usage-inspector/pricing-modelsdev.json` |
 | OpenCode | none needed — it stores its own cost per message | — |
 
-The dashboard requests a refresh with ttl 0 at every start and
-**content-diffs** the result: a cache and its startup log line only move when a rate
-actually changed, and it prints exactly which models moved. Offline, or when cost is not
-tracked, the built-in tables are used and no fetch happens.
+A dashboard start launches `sync --days 7`, which refreshes every cache that is due and
+re-prices estimates when the rates changed; the dashboard itself refreshes only when it runs
+without that sync (`--no-sync`, or no installed app), and then with the same twelve-hour ttl and
+backoff, so a start right after another fetch downloads nothing. Before 2.11.1 it refetched every
+list (about 5 MB with models.dev) on every start. Its **↻ refresh** button asks the server
+(`POST /api/sync`) for the same sync, then reloads: the server runs one at a time, not again
+within 30 seconds (`AI_USAGE_SYNC_MIN_GAP_MS`), and only for this dashboard's own page — the
+request must carry `x-ai-usage-dashboard: 1`, which makes another site's request a preflighted
+one the server never approves, and a localhost Host header. Refreshes **content-diff** the
+result: a cache and its log line only move when a rate actually changed, with the models that
+moved. Offline, or when cost is not tracked, the built-in tables are used and no fetch happens.
 
 Costs are computed and stored **when each prompt is recorded**, so refreshed rates apply to
 turns recorded after the cache last updated. The hook path reads the cache locally and
@@ -609,7 +616,7 @@ records `<agent>:<model-id>` timestamps after a successful check (`fresh`, `upda
 or `not-modified`) still found no price. For twelve hours those ids no longer shorten the TTL;
 new ids still do. Repeated fresh runs do not slide that timestamp forward. File failures are
 harmless, and this file is excluded from the `pricing-*.json` correction fingerprint. Failed attempts
-back off for one hour (capped by the ttl, so dashboard starts still try). ETags allow 304 replies.
+back off for one hour. ETags allow 304 replies.
 `AI_USAGE_NO_PRICING_REFRESH=1` disables all pricing requests; tests inject fetch implementations.
 Only public price data is requested: no prompts, tokens or costs are sent.
 
@@ -642,7 +649,8 @@ models is rejected. Complete rates merge over the bundled table without discardi
 It uses the same 12-hour ttl, 10-second default timeout (5 seconds at install/sync),
 `attemptedAt` one-hour failure backoff, conditional ETag, and statuses: `no-fetch`, `fresh`,
 `backoff`, `not-modified`, `unchanged`, `updated`, `offline`, `http-<code>`, `read-error`, `parse-thin`.
-Only install, sync and dashboard start fetch; imports/hooks/sweeps read the local cache only.
+Only install, sync, the worker and a dashboard without sync fetch; imports, hooks and sweeps read
+the local cache only.
 `AI_USAGE_NO_PRICING_REFRESH=1` disables all default fetches (tests may explicitly inject a fake).
 The standalone viewer bundles the z.ai refresher alongside the existing three refreshers.
 
@@ -834,7 +842,7 @@ Values worth knowing before they surprise you. All are constants in the source, 
 |---|---|
 | `sync --days N` | filters on transcript modification time, then imports each qualifying session whole — it does not filter individual turns |
 | dashboard start | spawns a detached `sync --days 7`, only when the globally installed app exists. Disable with `--no-sync` |
-| pricing refresh | on dashboard start, over the network (disable with `--no-pricing-refresh`); Claude, Codex, Cursor and z.ai also on `install`, `sync` and worker runs when the cache is over 12 hours old, 5 s per page. `AI_USAGE_NO_PRICING_REFRESH=1` disables all of it. The hook never fetches; the worker refreshes after sweeping, with a 1-hour ttl after a guess |
+| pricing refresh | on `install`, `sync` (including the one a dashboard starts or its ↻ refresh runs) and worker runs, each cache when over 12 hours old, 5 s per page; a dashboard without sync refreshes itself on the same ttl. `--no-pricing-refresh` keeps a dashboard and the sync it starts offline. `AI_USAGE_NO_PRICING_REFRESH=1` disables all of it. The hook never fetches; the worker refreshes after sweeping, with a 1-hour ttl after a guess |
 | first import of old history | priced at today's rates, since no rate is recorded in the transcript |
 
 **Aggregate mode** (`install.mjs --dashboard`)
@@ -863,8 +871,8 @@ A model released after this machine last fetched rates is priced from a fallback
   parser prices each message at its own model. `sync` does the same, and `install` runs it on
   every install as a catch-up.
 
-Who fetched does not matter because the dashboard refetches on every start and corrects nothing,
-and the worker and sync that follow find the cache fresh. So `ratesDigest` fingerprints every
+Who fetched does not matter because a dashboard without sync, or another process, may fetch and
+correct nothing, and the worker and sync that follow find the cache fresh. So `ratesDigest` fingerprints every
 `pricing-*.json` cache (ignoring `fetchedAt`, `attemptedAt` and `etag`), and `correctAll` records
 the fingerprint it corrected against in `~/.ai-usage-inspector/estimates.json` — taken before it
 starts, and only when every provider's correction succeeded. A correction is due whenever the

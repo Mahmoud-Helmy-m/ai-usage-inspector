@@ -407,6 +407,10 @@ const server = http.createServer(async (req, res) => {
         && (session === null || (x.sessionId == null ? "" : String(x.sessionId)) === session));
       return e ? send(res, 200, JSON.stringify(e)) : send(res, 404, "{}");
     }
+    if (route === "/api/sync" && req.method === "POST") {
+      const { status, body } = requestSync(req);
+      return send(res, status, JSON.stringify(body));
+    }
     if (route === "/api/config") {
       if (req.method === "POST") {
         let patch = {};
@@ -505,8 +509,10 @@ server.listen(port, HOST, () => {
   console.log(`  reading: ${DATA_DIR}\n`);
   writeRuntimeFile(port);
   armIdleExit();
-  if (!ARGS.noPricingRefresh) refreshPricing();
-  if (!ARGS.noSync) autoSync();
+  // The sync refreshes every rate cache that is due and re-prices estimates when rates changed;
+  // a second refresh from here would only repeat its downloads. Without a sync, refresh here.
+  const synced = !ARGS.noSync && autoSync();
+  if (!ARGS.noPricingRefresh && !synced) refreshPricing();
 });
 
 for (const sig of ["SIGINT", "SIGTERM"]) {
@@ -518,10 +524,16 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
 // installed). Uses the globally installed app; silently skipped in repo-mode
 // dev where it isn't installed. /api/events reads from disk per request, so a
 // browser refresh picks up whatever the sync imported.
+// One sync at a time per dashboard, started at launch or by the refresh button.
+let syncChild = null;
+let syncStartedAt = 0;
+const SYNC_MIN_GAP_MS = Number(process.env.AI_USAGE_SYNC_MIN_GAP_MS || 30_000);
+
+/** Start the background sync. Returns whether one was started. */
 function autoSync() {
   try {
     const syncJs = path.join(os.homedir(), ".ai-usage-inspector", "app", "src", "sync.mjs");
-    if (!fs.existsSync(syncJs)) return;
+    if (!fs.existsSync(syncJs)) return false;
     const env = { ...process.env };
     // --no-pricing-refresh means no fetch from anything this dashboard starts, and
     // sync refreshes rates itself.
@@ -536,22 +548,49 @@ function autoSync() {
       env,
     });
     child.unref();
+    syncChild = child;
+    syncStartedAt = Date.now();
+    // Rows a sync imports reach the page through the data watcher; a sync that only refreshed
+    // rates or labels still tells open dashboards it has finished.
+    const done = () => { if (syncChild === child) syncChild = null; notifyClients(); };
+    child.once("exit", done);
+    child.once("error", done);
     console.log(`  sync: refreshing last 7 days in the background — the page updates as rows arrive\n`);
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The refresh button's sync. Only this dashboard's own page may start one: the custom header
+ * makes any other site's request a preflighted one, which this server never approves, and the
+ * Host check refuses a page that rebinds a hostname to this port.
+ */
+function requestSync(req) {
+  const host = String(req.headers.host || "").replace(/:\d+$/, "").toLowerCase();
+  if (req.headers["x-ai-usage-dashboard"] !== "1" || !["localhost", "127.0.0.1", "[::1]"].includes(host)) {
+    return { status: 403, body: { started: false, reason: "forbidden" } };
+  }
+  if (ARGS.noSync) return { status: 200, body: { started: false, reason: "disabled" } };
+  if (syncChild) return { status: 200, body: { started: false, reason: "running" } };
+  if (Date.now() - syncStartedAt < SYNC_MIN_GAP_MS) return { status: 200, body: { started: false, reason: "recent" } };
+  return { status: 200, body: { started: autoSync(), reason: null } };
 }
 
 // Refresh the shared pricing caches — Claude rates from Anthropic's public
-// docs, OpenAI Standard rates from its docs (models.dev fills missing ids).
-// We re-fetch on every viewer start (a manual, occasional launch)
-// and content-diff the result — a cache and its log line only move when a rate
-// actually changed. Skipped when this project isn't tracking cost.
-// Non-blocking, best-effort, offline-safe.
+// docs, OpenAI Standard rates from its docs (models.dev fills missing ids) —
+// when this dashboard runs without a sync. Each cache keeps its twelve-hour ttl
+// and failure backoff, like the worker's, so a start right after another fetch
+// downloads nothing; the result is content-diffed, so a cache and its log line
+// only move when a rate actually changed. Skipped when this project isn't
+// tracking cost. Non-blocking, best-effort, offline-safe.
 async function refreshPricing() {
   if (!PRICING.length) return;
   if (!loadConfig().fields.cost) return;
   for (const { label, mod } of PRICING) {
     await mod
-      .refreshPricing({ ttlMs: 0 })
+      .refreshPricing()
       .then((r) => {
         if (r.status === "updated") {
           const changes = r.changes || [];

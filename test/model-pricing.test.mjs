@@ -430,7 +430,7 @@ for (const status of ["fresh", "updated", "unchanged", "not-modified"]) test(`wo
 
 test("models.dev refresh is wired into install, sync and a self-contained viewer sidecar", async (t) => {
   const dir = temp(t); copyViewerSidecars(dir);
-  assert.equal(VIEWER_VERSION, "38");
+  assert.ok(Number(VIEWER_VERSION) >= 38, "the bundle that ships the models.dev sidecar or later");
   assert.equal(new Set(VIEWER_SIDECARS.map(([, name]) => name)).size, VIEWER_SIDECARS.length);
   const mod = await import(pathToFileURL(path.join(dir, "remote-pricing-modelsdev.mjs")));
   assert.equal((await mod.refreshPricing({ file: path.join(dir, "cache.json") })).status, "no-fetch");

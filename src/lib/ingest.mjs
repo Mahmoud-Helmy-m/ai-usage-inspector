@@ -34,7 +34,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 //     copy would keep rewriting that cache in the old one.
 // 37: shared models.dev prices and Claude fast-mode pricing sidecars.
 // 38: Codex service tiers and models.dev context tiers.
-export const VIEWER_VERSION = "38";
+// 39: the refresh button syncs (new turns, due rates, estimates); start-up stops refetching every rate.
+export const VIEWER_VERSION = "39";
 
 // A project gets viewer/ and nothing else — no src/ tree beside it — so the
 // modules the bundled dashboard imports are copied in next to it, under the

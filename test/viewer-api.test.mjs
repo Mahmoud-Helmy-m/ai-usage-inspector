@@ -1336,3 +1336,53 @@ test("zai: viewer CSV exports vendor beside model including empty unknowns", asy
   await ui.run('exportRecords("csv")');
   assert.equal(ui.run('csv').split("\r\n")[1].split(",")[col], "");
 });
+
+// The refresh button's sync: only this dashboard's own page may start one.
+test("/api/sync refuses requests without the dashboard header or from another host", async () => {
+  assert.equal((await request(port, "/api/sync", { method: "POST" })).status, 403);
+  assert.equal((await request(port, "/api/sync", { method: "POST", headers: { "x-ai-usage-dashboard": "1", Host: "evil.example" } })).status, 403);
+  assert.equal((await request(port, "/api/sync", { method: "POST", headers: { "x-ai-usage-dashboard": "0" } })).status, 403);
+  const ok = await request(port, "/api/sync", { method: "POST", headers: { "x-ai-usage-dashboard": "1" } });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.json, { started: false, reason: "disabled" }, "--no-sync also disables the button's sync");
+});
+
+// With sync on: start-up runs one, the button runs another once the first is done, never two at
+// once, and not again within the minimum gap.
+test("the dashboard syncs at start and on refresh, one at a time", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ai-usage-viewersync-"));
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), "ai-usage-viewersync-data-"));
+  const log = path.join(home, "syncs.log");
+  const app = path.join(home, ".ai-usage-inspector", "app", "src");
+  fs.mkdirSync(app, { recursive: true });
+  // A stand-in for the installed sync: records each run, stays busy briefly, then exits.
+  fs.writeFileSync(path.join(app, "sync.mjs"),
+    `import fs from "node:fs"; fs.appendFileSync(${JSON.stringify(log)}, process.argv.slice(2).join(" ") + "\\n");` +
+    ` setTimeout(() => {}, Number(process.env.STUB_SYNC_MS || 600));`);
+  fs.writeFileSync(path.join(data, "p.ndjson"), RECORDS.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const syncPort = 4900 + Math.floor(Math.random() * 90);
+  const server = spawn(process.execPath, [SERVER, "--port", String(syncPort), "--no-pricing-refresh"], {
+    env: { ...process.env, HOME: home, USERPROFILE: home, AI_USAGE_DIR: data, AI_USAGE_SYNC_MIN_GAP_MS: "1500" },
+    stdio: "ignore",
+  });
+  t.after(() => {
+    try { server.kill(); } catch {}
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true });
+  });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (let i = 0; i < 60; i++) {
+    try { await request(syncPort, "/api/config"); break; } catch { await wait(100); }
+  }
+  const runs = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").filter(Boolean) : []);
+  for (let i = 0; i < 50 && runs().length < 1; i++) await wait(100);
+  assert.deepEqual(runs(), ["--days 7"], "start-up runs one sync");
+  const press = () => request(syncPort, "/api/sync", { method: "POST", headers: { "x-ai-usage-dashboard": "1" } }).then((r) => r.json);
+  assert.deepEqual(await press(), { started: false, reason: "running" });
+  await wait(900);
+  assert.deepEqual(await press(), { started: false, reason: "recent" }, "finished, but within the minimum gap");
+  await wait(800);
+  assert.deepEqual(await press(), { started: true, reason: null });
+  for (let i = 0; i < 50 && runs().length < 2; i++) await wait(100);
+  assert.equal(runs().length, 2);
+});

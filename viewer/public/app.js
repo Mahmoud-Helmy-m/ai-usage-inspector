@@ -1709,7 +1709,7 @@ function bind() {
   $("#f-csv").addEventListener("click", () => exportRecords("csv"));
   $("#f-json").addEventListener("click", () => exportRecords("json"));
   $("#f-del").addEventListener("click", () => delEvents(state.view.map(eventKey), "prompt(s) shown"));
-  $("#refresh").addEventListener("click", load);
+  $("#refresh").addEventListener("click", refreshNow);
   $("#theme").addEventListener("click", () => {
     const cur = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
     setTheme(cur === "light" ? "dark" : "light");
@@ -1793,11 +1793,31 @@ function liveRefresh() {
 function flushPendingLive() {
   if (livePending) setTimeout(liveRefresh, 0);
 }
+// The refresh button: reload what is stored now, and ask the server for a sync — new turns,
+// rates that are due, estimates that can now be priced. Its rows arrive through the live
+// feed, which also says when it has finished. The server runs one at a time.
+let syncing = null;
+const SYNC_LABEL_MS = 120_000;
+function showSyncing(on) {
+  const btn = $("#refresh");
+  clearTimeout(syncing);
+  syncing = on ? setTimeout(() => showSyncing(false), SYNC_LABEL_MS) : null;
+  btn.textContent = on ? "↻ syncing…" : "↻ refresh";
+  btn.classList.toggle("busy", on);
+}
+async function refreshNow() {
+  try {
+    const res = await fetch("/api/sync", { method: "POST", headers: { "x-ai-usage-dashboard": "1" } });
+    const body = res.ok ? await res.json() : null;
+    if (body && (body.started || body.reason === "running")) showSyncing(true);
+  } catch {}
+  await load().catch(() => {});
+}
 function initLive() {
   if (typeof EventSource !== "function") return;
   try {
     const es = new EventSource("/api/stream");
-    es.addEventListener("change", liveRefresh);
+    es.addEventListener("change", () => { if (syncing) showSyncing(false); liveRefresh(); });
   } catch {}
 }
 
