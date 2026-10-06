@@ -226,3 +226,51 @@ test("turns stored under a branch as well as its original are collapsed in the s
   assert.equal(report.branchCopiesRemoved, 1);
   assert.deepEqual(readStore(p.root).map((r) => `${r.sessionId}:${r.id.slice(-1)}:${r.branchOf || "-"}`), ["O:1:-", "B:2:O"]);
 });
+
+// Repair backups were kept for good (14 copies, 458 MB on one machine): only the newest few stay.
+import { pruneBackups, BACKUPS_KEPT } from "../src/lib/copies.mjs";
+
+function backupsDir(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ai-usage-backups-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+const ours = (dir, day, manifest = true) => {
+  const name = `2026-09-${day}T10-00-00-000Z-00000000-0000-4000-8000-0000000000${day}`;
+  fs.mkdirSync(path.join(dir, name));
+  fs.writeFileSync(path.join(dir, name, "1.ndjson"), "{}\n");
+  if (manifest) fs.writeFileSync(path.join(dir, name, "manifest.json"), "{}");
+  return name;
+};
+
+test("old repair backups are pruned to the newest few; nothing else is touched", (t) => {
+  const dir = backupsDir(t);
+  const names = ["10", "11", "12", "13", "14"].map((d) => ours(dir, d));
+  const unmanifested = ours(dir, "09", false);
+  fs.mkdirSync(path.join(dir, "my-own-copy"));
+  fs.writeFileSync(path.join(dir, "notes.txt"), "keep me");
+  assert.equal(BACKUPS_KEPT, 3);
+  assert.deepEqual(pruneBackups({ backupDir: dir }), names.slice(0, 2), "the two oldest");
+  assert.deepEqual(fs.readdirSync(dir).sort(), [...names.slice(2), unmanifested, "my-own-copy", "notes.txt"].sort());
+  assert.deepEqual(pruneBackups({ backupDir: dir }), [], "a second run removes nothing");
+  assert.deepEqual(pruneBackups({ backupDir: path.join(dir, "absent") }), [], "a missing folder is fine");
+});
+
+test("taking a repair backup prunes the older ones", async (t) => {
+  const dir = backupsDir(t);
+  for (const d of ["10", "11", "12", "13"]) ours(dir, d);
+  await backupCandidateStores({ transcripts: [], backupDir: dir });
+  assert.equal(fs.readdirSync(dir).length, BACKUPS_KEPT);
+});
+
+test("pruning never removes the backup a repair just took, nor the one the cleanup report names", (t) => {
+  const dir = backupsDir(t);
+  const report = path.join(dir, "..", `report-${path.basename(dir)}.json`);
+  t.after(() => fs.rmSync(report, { force: true }));
+  const names = ["10", "11", "12", "13", "14", "15"].map((d) => ours(dir, d));
+  // The report names the oldest; a repair just took "10" again under a clock set back.
+  fs.writeFileSync(report, JSON.stringify({ backup: path.join(dir, names[1]) }));
+  const removed = pruneBackups({ backupDir: dir, protect: [path.join(dir, names[0])], reportFile: report });
+  assert.deepEqual(removed, names.slice(2, 3), "only the oldest unprotected one beyond the newest three");
+  for (const kept of [names[0], names[1], ...names.slice(3)]) assert.ok(fs.existsSync(path.join(dir, kept)), kept);
+});

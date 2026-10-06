@@ -6,7 +6,7 @@
 
 ![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-success)
-![Tests](https://img.shields.io/badge/tests-621-success)
+![Tests](https://img.shields.io/badge/tests-626-success)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
@@ -191,7 +191,8 @@ fallback folder; different continuation files can still name different folders (
 Candidate Claude stores are backed up **before the repair read**, and a failed backup leaves
 the repair owed without ingesting anything. Cleanup also backs up the exact bytes it replaces
 under the file's lock. Backups live in `~/.ai-usage-inspector/backups/`, with a recovery manifest
-updated before each file changes. The outcome is written to
+updated before each file changes; the newest three are kept, plus the one the last cleanup report
+names. The outcome is written to
 `~/.ai-usage-inspector/copy-cleanup.json`. If a store holds no rows, the report and `sync` name
 its **`.ai-usage` folder** for optional deletion (or its aggregate file in `AI_USAGE_DIR` mode).
 The project folder is never the deletion target.

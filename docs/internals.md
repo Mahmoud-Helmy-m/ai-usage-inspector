@@ -180,6 +180,11 @@ much work for the same turn. If evidence is missing, both rows stay. `mutateNdjs
 Backups live in `~/.ai-usage-inspector/backups/<timestamp>-<unique-id>/`; `manifest.json` is updated
 atomically after every backup and before changing its source, so interruption leaves every changed
 file identified. Pre-ingestion and cleanup snapshots share the repair's backup directory.
+Only the newest three backups are kept (`pruneBackups` in `copies.mjs`, after each backup and on
+`install`); before 2.11.2 every one was kept, which reached 458 MB in 14 copies on one machine.
+Pruning touches only folders with this tool's name pattern and a `manifest.json`, and never the
+backup a repair has just taken (a clock set back would sort it oldest) or the one
+`copy-cleanup.json` names as its recovery copy.
 
 The outcome is written to `~/.ai-usage-inspector/copy-cleanup.json`. `emptyStores` and sync's
 guidance name only an emptied **`.ai-usage` directory**, or the aggregate file in `AI_USAGE_DIR`
@@ -549,12 +554,15 @@ without that sync (`--no-sync`, or no installed app), on the same hour and backo
 2.11.2 it refetched every list (about 5 MB with models.dev) on every start, whatever its age. Its **↻ refresh** button asks the server
 (`POST /api/sync`) for the same sync, then reloads: the server runs one at a time, not again
 within 30 seconds (`AI_USAGE_SYNC_MIN_GAP_MS`), and only for this dashboard's own page (see
-below). Refreshes **content-diff** the
+below). Imported rows reach the page as the live feed's `change` events; the sync's end is its own
+`synced` event, which ends the button's "syncing…". Those limits live in the server process: a
+dashboard restarted while its sync still runs may start another, and the scan leases (one sync per
+agent at a time) keep that harmless. Refreshes **content-diff** the
 result: a cache and its log line only move when a rate actually changed, with the models that
 moved. Offline, or when cost is not tracked, the built-in tables are used and no fetch happens.
 
 **Other web pages cannot use the dashboard server.** Two checks in `viewer/server.mjs`:
-- Every request must name this machine in its `Host` header — `localhost`, `*.localhost` or an
+- Every request must name this machine in its `Host` header — `localhost` (or `localhost.`), `*.localhost` or an
   IP address — or it gets 403. A page on another site that points its own hostname at this
   machine (DNS rebinding) would otherwise be same-origin with the dashboard and could read
   every stored prompt; that attack always needs a hostname, so IP addresses (reaching a

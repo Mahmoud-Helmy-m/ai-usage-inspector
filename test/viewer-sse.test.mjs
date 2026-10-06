@@ -34,3 +34,20 @@ test("failed SSE heartbeats remove the client and arm cleanup", async () => {
   assert.equal(clients.size, 0);
   assert.equal(drops, 1);
 });
+
+test("a named event reaches every client at once, apart from data changes", async (t) => {
+  const written = [];
+  const req = new EventEmitter();
+  const res = new EventEmitter();
+  res.write = (chunk) => { written.push(chunk); };
+  const clients = createSseRegistry({ onDrop: () => {}, heartbeatMs: 60_000, notifyDelayMs: 1 });
+  const drop = clients.add(req, res);
+  t.after(drop);
+  clients.send("synced");
+  assert.deepEqual(written, ["event: synced\ndata: {}\n\n"], "sent at once, as its own event");
+  const broken = new EventEmitter();
+  broken.write = () => { throw new Error("closed"); };
+  clients.add(new EventEmitter(), broken);
+  clients.send("synced");
+  assert.equal(clients.size, 1, "a client that cannot be written to is dropped");
+});

@@ -48,9 +48,21 @@ export function createSseRegistry({
     if (notifyTimer.unref) notifyTimer.unref();
   }
 
+  // A named event, sent at once: news that is not "the data changed" (a sync finishing).
+  function send(event) {
+    for (const [res, drop] of clients) {
+      try {
+        res.write(`event: ${event}\ndata: {}\n\n`);
+      } catch {
+        drop();
+      }
+    }
+  }
+
   return {
     add,
     notify,
+    send,
     get size() { return clients.size; },
   };
 }

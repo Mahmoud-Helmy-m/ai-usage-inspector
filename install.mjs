@@ -31,6 +31,7 @@ import { getProvider, listProviders, detectInstalled } from "./src/providers/ind
 import { copyViewerSidecars, launcherName } from "./src/lib/ingest.mjs";
 import { recordInstall } from "./src/lib/scan-state.mjs";
 import { correctAll } from "./src/lib/estimates.mjs";
+import { pruneBackups, BACKUPS_KEPT } from "./src/lib/copies.mjs";
 
 const REPO = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
@@ -159,6 +160,9 @@ async function noteInstall(upgrading) {
     for (const c of Object.values(await correctAll(detectInstalled()))) priced += c.priced || 0;
   } catch {}
   if (priced) ok(`prices   ${priced} estimated turn(s) re-priced at real rates`);
+  // Older versions kept every repair backup; keep only the newest few.
+  const pruned = pruneBackups();
+  if (pruned.length) ok(`backups  ${pruned.length} old repair backup(s) removed; the newest ${BACKUPS_KEPT} are kept`);
 }
 
 const FIELD_GROUPS = ["text", "tokens", "cost", "context", "timing", "skills", "counts", "meta"];

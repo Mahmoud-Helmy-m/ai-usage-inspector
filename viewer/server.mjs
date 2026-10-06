@@ -560,9 +560,9 @@ function autoSync() {
     child.unref();
     syncChild = child;
     syncStartedAt = Date.now();
-    // Rows a sync imports reach the page through the data watcher; a sync that only refreshed
-    // rates or labels still tells open dashboards it has finished.
-    const done = () => { if (syncChild === child) syncChild = null; notifyClients(); };
+    // Rows a sync imports reach the page through the data watcher as "change"; its end is its
+    // own event, so the page's "syncing…" lasts until the sync is done, not the first write.
+    const done = () => { if (syncChild === child) syncChild = null; notifyClients(); clients.send("synced"); };
     child.once("exit", done);
     child.once("error", done);
     console.log(`  sync: refreshing last 7 days in the background — the page updates as rows arrive\n`);
@@ -580,7 +580,8 @@ function autoSync() {
 // x-ai-usage-dashboard: 1, which turns another site's request into a preflighted one this
 // server never approves.
 function localHost(req) {
-  const host = String(req.headers.host || "").toLowerCase().replace(/:\d+$/, "");
+  // "localhost." is the same name written fully qualified.
+  const host = String(req.headers.host || "").toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "");
   return host === "localhost" || host.endsWith(".localhost")
     || /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || /^\[[0-9a-f:.]+\]$/.test(host);
 }

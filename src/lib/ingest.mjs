@@ -38,7 +38,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 40: dashboard syncs check rates over an hour old.
 // 41: the models.dev sidecar allows 30 seconds for its ~5 MB body.
 // 42: the server refuses other hosts, and changes or exports without the dashboard header.
-export const VIEWER_VERSION = "42";
+// 43: a "synced" live event ends the refresh label; the detail panel shows the endpoint.
+export const VIEWER_VERSION = "43";
 
 // A project gets viewer/ and nothing else — no src/ tree beside it — so the
 // modules the bundled dashboard imports are copied in next to it, under the

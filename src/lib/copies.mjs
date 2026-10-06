@@ -136,7 +136,46 @@ export async function backupCandidateStores({ transcripts = [], backupDir = defa
     });
     if (result === false) throw new LockTimeoutError(file);
   }
+  pruneBackups({ backupDir, protect: [backup.directory] });
   return backup;
+}
+
+// Each repair copies every store it may rewrite, a few tens of MB on a busy machine; kept for
+// good they reached 458 MB in 14 copies. A backup is for undoing the latest repairs, so only the
+// newest few are kept.
+export const BACKUPS_KEPT = 3;
+const BACKUP_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f-]{36}$/;
+
+/**
+ * Remove all but the newest `keep` backups. Only folders this tool wrote — its name pattern and
+ * a manifest.json — are touched, and never one in `protect` (the backup a repair just took,
+ * which a clock set back would sort as oldest) or the one the last cleanup report names as its
+ * recovery copy. Returns the folders removed; never throws.
+ */
+export function pruneBackups({ backupDir = defaultBackupDir(), keep = BACKUPS_KEPT, protect = [], reportFile = defaultReportFile() } = {}) {
+  const kept = new Set(protect.filter(Boolean).map((p) => path.basename(p)));
+  try {
+    const named = JSON.parse(fs.readFileSync(reportFile, "utf8")).backup;
+    if (named) kept.add(path.basename(named));
+  } catch {}
+  let names = [];
+  try {
+    names = fs.readdirSync(backupDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && BACKUP_NAME.test(e.name) && fs.existsSync(path.join(backupDir, e.name, "manifest.json")))
+      .map((e) => e.name)
+      .filter((name) => !kept.has(name))
+      .sort(); // ISO time first in the name, so lexical order is age order
+  } catch {
+    return [];
+  }
+  const removed = [];
+  for (const name of names.slice(0, Math.max(0, names.length - keep))) {
+    try {
+      fs.rmSync(path.join(backupDir, name), { recursive: true, force: true });
+      removed.push(name);
+    } catch {}
+  }
+  return removed;
 }
 
 function planCleanup(rowsByStore) {

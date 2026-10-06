@@ -1397,7 +1397,7 @@ test("requests naming another host are refused on every route; localhost names a
     const res = await request(port, route, { headers: { Host: `attacker.example:${port}` } });
     assert.equal(res.status, 403, `${route} with a foreign Host`);
   }
-  for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, `app.localhost:${port}`, `[::1]:${port}`, `192.168.1.20:${port}`]) {
+  for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, `app.localhost:${port}`, `[::1]:${port}`, `192.168.1.20:${port}`, `localhost.:${port}`]) {
     assert.equal((await request(port, "/api/config", { headers: { Host: host } })).status, 200, host);
   }
 });
@@ -1425,4 +1425,11 @@ test("the dashboard page sends the header on every request that changes or expor
   const changing = [...app.matchAll(/fetch\("\/api\/(\w+)"[^)]*?method: "(POST|DELETE)"[^]*?\}\)/g)];
   assert.ok(changing.length >= 5, `found ${changing.length} changing requests`);
   for (const [call] of changing) assert.match(call, /headers: API_HEADERS/, call.slice(0, 80));
+});
+
+test("the page clears \"syncing…\" when the sync ends, not on the first data change", () => {
+  const app = fs.readFileSync(path.join(path.dirname(SERVER), "public", "app.js"), "utf8");
+  assert.match(app, /es\.addEventListener\("change", liveRefresh\);/);
+  assert.match(app, /es\.addEventListener\("synced", \(\) => \{ if \(syncing\) showSyncing\(false\); liveRefresh\(\); \}\);/);
+  assert.match(fs.readFileSync(SERVER, "utf8"), /clients\.send\("synced"\)/);
 });

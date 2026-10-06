@@ -1566,6 +1566,9 @@ async function openDrawer(id, provider, session) {
   const meta = [`<span>${fmtWhen(e.ts)}</span>`, `<span>${esc(e.model)}</span>`,
     `<span class="tag ${esc(e.permissionMode)}">${esc(e.permissionMode)}</span>`];
   if (has("meta") && e.vendor) meta.push(`<span>vendor: ${esc(e.vendor)}</span>`);
+  // Where the turn was answered (anthropic, local or remote): billing evidence, so shown whenever
+  // recorded rather than with the meta group.
+  if (e.endpoint) meta.push(`<span title="where this turn was answered">endpoint: ${esc(e.endpoint)}</span>`);
   if (e.effortLevel) meta.push(`<span>effort: ${esc(e.effortLevel)}</span>`);
   if (e.durationMs != null) meta.push(`<span>${fmtDur(e.durationMs)}</span>`);
   if (e.firstResponseMs != null) meta.push(`<span>1st reply ${fmtDur(e.firstResponseMs)}</span>`);
@@ -1821,7 +1824,8 @@ function initLive() {
   if (typeof EventSource !== "function") return;
   try {
     const es = new EventSource("/api/stream");
-    es.addEventListener("change", () => { if (syncing) showSyncing(false); liveRefresh(); });
+    es.addEventListener("change", liveRefresh);
+    es.addEventListener("synced", () => { if (syncing) showSyncing(false); liveRefresh(); });
   } catch {}
 }
 
