@@ -4,6 +4,10 @@ import os from "node:os";
 import path from "node:path";
 
 export const PRICING_URL = "https://models.dev/api.json";
+// The whole ~5 MB body must arrive inside the timeout, not just the first byte: callers' usual
+// 5 seconds would fail on any connection under about 8 Mbit/s, and each failure backs off for an
+// hour. Every caller runs in the background, so it can wait.
+export const DOWNLOAD_TIMEOUT_MS = 30_000;
 export const CACHE_FILE = path.join(os.homedir(), ".ai-usage-inspector", "pricing-modelsdev.json");
 // Explicit allowlist: coding plans and resellers often advertise zero subscription
 // prices for the same ids. They are not a lab's per-token API price.
@@ -56,7 +60,7 @@ export function diffRates(a = {}, b = {}) {
 }
 
 export async function refreshPricing({ file = CACHE_FILE, url = PRICING_URL,
-  ttlMs = 12 * 60 * 60 * 1000, retryMs = 60 * 60 * 1000, timeoutMs = 10_000,
+  ttlMs = 12 * 60 * 60 * 1000, retryMs = 60 * 60 * 1000, timeoutMs = DOWNLOAD_TIMEOUT_MS,
   now = Date.now(),
   fetchImpl = process.env.AI_USAGE_NO_PRICING_REFRESH === "1" ? null : globalThis.fetch,
 } = {}) {

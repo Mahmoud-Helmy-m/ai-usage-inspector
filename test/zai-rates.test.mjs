@@ -273,7 +273,8 @@ test("zai: interactive refresh wiring and standalone viewer include the vendor",
   const dir = temp(t);
   copyViewerSidecars(dir);
   assert.ok(fs.existsSync(path.join(dir, "remote-pricing-zai.mjs")));
-  for (const file of ["install.mjs", "src/sync.mjs"]) assert.match(fs.readFileSync(file, "utf8"), /await refreshZaiPricing\(\{ timeoutMs: 5_000 \}\)/);
+  assert.match(fs.readFileSync("install.mjs", "utf8"), /await refreshZaiPricing\(\{ timeoutMs: 5_000 \}\)/);
+  assert.match(fs.readFileSync("src/sync.mjs", "utf8"), /await refreshZaiPricing\(refreshOptions\)/);
   assert.match(fs.readFileSync("viewer/server.mjs", "utf8"), /label: "z.ai", mod: await loadPricing\("\.\/remote-pricing-zai.mjs"/);
 });
 

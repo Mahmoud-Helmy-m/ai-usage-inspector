@@ -17,7 +17,7 @@
 // Per-project tracking config still gates every project (disabled = skipped),
 // exactly like the hook path.
 import { refreshPricing as refreshZaiPricing } from "./lib/vendors/zai/pricing.mjs";
-import { refreshPricing as refreshModelsDevPricing } from "./lib/vendors/modelsdev/remote-pricing.mjs";
+import { refreshPricing as refreshModelsDevPricing, DOWNLOAD_TIMEOUT_MS as MODELS_DEV_TIMEOUT_MS } from "./lib/vendors/modelsdev/remote-pricing.mjs";
 import path from "node:path";
 import { getProvider, detectInstalled } from "./providers/index.mjs";
 import { ingestTranscript } from "./lib/ingest.mjs";
@@ -121,18 +121,22 @@ async function main() {
     process.exit(1);
   }
 
-  // Refresh before parsing: twelve-hour ttl, bounded requests and failure backoff.
+  // Refresh before parsing: bounded requests and failure backoff, on each cache's twelve-hour
+  // ttl — or a shorter one a dashboard asks for (AI_USAGE_RATES_TTL_MS): someone opening it, or
+  // pressing refresh, wants today's rates, and a check of an unchanged list costs little.
+  const ttl = Number(process.env.AI_USAGE_RATES_TTL_MS);
+  const refreshOptions = { timeoutMs: 5_000, ...(Number.isFinite(ttl) && ttl > 0 ? { ttlMs: ttl } : {}) };
   let ratesLearned = false;
   try {
-    const m = await refreshModelsDevPricing({ timeoutMs: 5_000 });
+    const m = await refreshModelsDevPricing({ ...refreshOptions, timeoutMs: MODELS_DEV_TIMEOUT_MS });
     if (m && m.status === "updated") ratesLearned = true;
-    const z = await refreshZaiPricing({ timeoutMs: 5_000 });
+    const z = await refreshZaiPricing(refreshOptions);
     if (z && z.status === "updated") ratesLearned = true;
   } catch {}
   for (const p of providers) {
     if (!["claude", "codex", "cursor"].includes(p.id) || typeof p.refreshPricing !== "function") continue;
     try {
-      const r = await p.refreshPricing({ timeoutMs: 5_000 });
+      const r = await p.refreshPricing(refreshOptions);
       if (r && r.status === "updated") {
         ratesLearned = true;
         console.log(`  ${p.id}: rates and context windows updated from the provider's docs`);

@@ -434,7 +434,11 @@ test("models.dev refresh is wired into install, sync and a self-contained viewer
   assert.equal(new Set(VIEWER_SIDECARS.map(([, name]) => name)).size, VIEWER_SIDECARS.length);
   const mod = await import(pathToFileURL(path.join(dir, "remote-pricing-modelsdev.mjs")));
   assert.equal((await mod.refreshPricing({ file: path.join(dir, "cache.json") })).status, "no-fetch");
-  for (const file of ["install.mjs", "src/sync.mjs"]) assert.match(fs.readFileSync(file, "utf8"), /await refreshModelsDevPricing\(\{ timeoutMs: 5_000 \}\)/);
+  // Its ~5 MB body gets the long timeout everywhere, not the small pages' 5 seconds.
+  assert.equal(remote.DOWNLOAD_TIMEOUT_MS, 30_000);
+  assert.match(fs.readFileSync("install.mjs", "utf8"), /await refreshModelsDevPricing\(\{ timeoutMs: MODELS_DEV_TIMEOUT_MS \}\)/);
+  assert.match(fs.readFileSync("src/sync.mjs", "utf8"), /await refreshModelsDevPricing\(\{ \.\.\.refreshOptions, timeoutMs: MODELS_DEV_TIMEOUT_MS \}\)/);
+  assert.match(fs.readFileSync("src/worker.mjs", "utf8"), /refreshModelsDevPricing\(\{ \.\.\.o, timeoutMs: Math\.max\(o\.timeoutMs \|\| 0, MODELS_DEV_TIMEOUT_MS\) \}\)/);
   assert.match(fs.readFileSync("viewer/server.mjs", "utf8"), /label: "models.dev", mod: await loadPricing\("\.\/remote-pricing-modelsdev.mjs"/);
 });
 

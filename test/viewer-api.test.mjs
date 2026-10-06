@@ -1357,7 +1357,7 @@ test("the dashboard syncs at start and on refresh, one at a time", async (t) => 
   fs.mkdirSync(app, { recursive: true });
   // A stand-in for the installed sync: records each run, stays busy briefly, then exits.
   fs.writeFileSync(path.join(app, "sync.mjs"),
-    `import fs from "node:fs"; fs.appendFileSync(${JSON.stringify(log)}, process.argv.slice(2).join(" ") + "\\n");` +
+    `import fs from "node:fs"; fs.appendFileSync(${JSON.stringify(log)}, process.argv.slice(2).join(" ") + " ttl=" + process.env.AI_USAGE_RATES_TTL_MS + "\\n");` +
     ` setTimeout(() => {}, Number(process.env.STUB_SYNC_MS || 600));`);
   fs.writeFileSync(path.join(data, "p.ndjson"), RECORDS.map((r) => JSON.stringify(r)).join("\n") + "\n");
   const syncPort = 4900 + Math.floor(Math.random() * 90);
@@ -1376,7 +1376,7 @@ test("the dashboard syncs at start and on refresh, one at a time", async (t) => 
   }
   const runs = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").filter(Boolean) : []);
   for (let i = 0; i < 50 && runs().length < 1; i++) await wait(100);
-  assert.deepEqual(runs(), ["--days 7"], "start-up runs one sync");
+  assert.deepEqual(runs(), ["--days 7 ttl=3600000"], "start-up runs one sync, checking rates over an hour old");
   const press = () => request(syncPort, "/api/sync", { method: "POST", headers: { "x-ai-usage-dashboard": "1" } }).then((r) => r.json);
   assert.deepEqual(await press(), { started: false, reason: "running" });
   await wait(900);

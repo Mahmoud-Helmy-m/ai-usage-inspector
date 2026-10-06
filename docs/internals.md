@@ -540,11 +540,13 @@ Per-model rates ship built-in and are refreshed from these sources by the worker
 | Other labs and platforms | [models.dev](https://models.dev/api.json), a community dataset | `~/.ai-usage-inspector/pricing-modelsdev.json` |
 | OpenCode | none needed — it stores its own cost per message | — |
 
-A dashboard start launches `sync --days 7`, which refreshes every cache that is due and
-re-prices estimates when the rates changed; the dashboard itself refreshes only when it runs
-without that sync (`--no-sync`, or no installed app), and then with the same twelve-hour ttl and
-backoff, so a start right after another fetch downloads nothing. Before 2.11.1 it refetched every
-list (about 5 MB with models.dev) on every start. Its **↻ refresh** button asks the server
+A dashboard start launches `sync --days 7`, which refreshes the caches and re-prices estimates
+when the rates changed. Someone opening the dashboard wants today's rates, so that sync checks any
+list older than an hour (`AI_USAGE_RATES_TTL_MS`, set by the dashboard) rather than the worker's
+twelve; an unchanged list costs little — models.dev and OpenAI answer `304 Not Modified` to the
+cached ETag, and the other pages are a few KB. The dashboard itself refreshes only when it runs
+without that sync (`--no-sync`, or no installed app), on the same hour and backoff. Before
+2.11.2 it refetched every list (about 5 MB with models.dev) on every start, whatever its age. Its **↻ refresh** button asks the server
 (`POST /api/sync`) for the same sync, then reloads: the server runs one at a time, not again
 within 30 seconds (`AI_USAGE_SYNC_MIN_GAP_MS`), and only for this dashboard's own page — the
 request must carry `x-ai-usage-dashboard: 1`, which makes another site's request a preflighted
@@ -842,7 +844,7 @@ Values worth knowing before they surprise you. All are constants in the source, 
 |---|---|
 | `sync --days N` | filters on transcript modification time, then imports each qualifying session whole — it does not filter individual turns |
 | dashboard start | spawns a detached `sync --days 7`, only when the globally installed app exists. Disable with `--no-sync` |
-| pricing refresh | on `install`, `sync` (including the one a dashboard starts or its ↻ refresh runs) and worker runs, each cache when over 12 hours old, 5 s per page; a dashboard without sync refreshes itself on the same ttl. `--no-pricing-refresh` keeps a dashboard and the sync it starts offline. `AI_USAGE_NO_PRICING_REFRESH=1` disables all of it. The hook never fetches; the worker refreshes after sweeping, with a 1-hour ttl after a guess |
+| pricing refresh | on `install`, `sync` and worker runs, each cache when over 12 hours old, 5 s per page (30 s for models.dev's ~5 MB body, which must arrive whole inside the timeout); the sync a dashboard starts or its ↻ refresh runs checks caches over 1 hour old, as does a dashboard without sync. `--no-pricing-refresh` keeps a dashboard and the sync it starts offline. `AI_USAGE_NO_PRICING_REFRESH=1` disables all of it. The hook never fetches; the worker refreshes after sweeping, with a 1-hour ttl after a guess |
 | first import of old history | priced at today's rates, since no rate is recorded in the transcript |
 
 **Aggregate mode** (`install.mjs --dashboard`)

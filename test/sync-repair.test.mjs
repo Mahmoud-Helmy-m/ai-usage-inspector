@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { recordInstall, repairDue } from "../src/lib/scan-state.mjs";
 
 const SYNC = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "sync.mjs");
@@ -199,4 +199,36 @@ test("sync prices a stored estimate once rates another process fetched know its 
   sync();
   assert.equal(row().cost.source, "priced");
   assert.equal(row().cost.total, 3, "one million input tokens at $3");
+});
+
+// A dashboard asks its syncs to check rates over an hour old; on their own, syncs keep twelve.
+// fetch is replaced in the child by a stub that records each URL and fails, so nothing goes online.
+test("sync checks rates on the window a dashboard asks for, and twelve hours otherwise", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ai-usage-syncttl-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const fetchLog = path.join(home, "fetches.log");
+  const stub = path.join(home, "fetch-stub.mjs");
+  fs.writeFileSync(stub, `import fs from "node:fs";
+globalThis.fetch = async (url) => { fs.appendFileSync(${JSON.stringify(fetchLog)}, String(url) + "\\n"); throw new Error("offline"); };`);
+  const cacheDir = path.join(home, ".ai-usage-inspector");
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+  const prime = () => fs.writeFileSync(path.join(cacheDir, "pricing-modelsdev.json"),
+    JSON.stringify({ fetchedAt: twoHoursAgo, attemptedAt: twoHoursAgo, rates: { moonshotai: { "kimi-k2": { input: 1, output: 4 } } } }));
+  const run = (extra) => {
+    prime();
+    fs.rmSync(fetchLog, { force: true });
+    const env = { ...process.env, HOME: home, USERPROFILE: home, CODEX_HOME: path.join(home, ".codex"),
+      AI_USAGE_SCAN_STATE_FILE: path.join(home, "scan-state.json"), NO_COLOR: "1", ...extra };
+    delete env.AI_USAGE_NO_PRICING_REFRESH;
+    delete env.AI_USAGE_DIR;
+    const out = fs.openSync(path.join(home, "out.txt"), "w");
+    try {
+      spawnSync(process.execPath, ["--import", pathToFileURL(stub).href, SYNC, "--provider", "codex", "--days", "1"], { env, stdio: ["ignore", out, out] });
+    } finally { fs.closeSync(out); }
+    return fs.existsSync(fetchLog) ? fs.readFileSync(fetchLog, "utf8") : "";
+  };
+  assert.doesNotMatch(run({}), /models\.dev/, "two hours old is fresh on the usual twelve-hour ttl");
+  assert.match(run({ AI_USAGE_RATES_TTL_MS: "3600000" }), /models\.dev/, "a dashboard's sync checks it");
+  assert.doesNotMatch(run({ AI_USAGE_RATES_TTL_MS: "0" }), /models\.dev/, "zero or junk keeps the usual ttl");
 });

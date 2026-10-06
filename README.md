@@ -6,7 +6,7 @@
 
 ![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-success)
-![Tests](https://img.shields.io/badge/tests-617-success)
+![Tests](https://img.shields.io/badge/tests-618-success)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
@@ -270,9 +270,10 @@ Fast/Flex from the top-level config setting (Priority means Fast); turns the hoo
 their tier from Codex's own log while it still holds them (about ten days), and otherwise use
 Standard. Missing tier rates stay estimated. models.dev context tiers apply per request, with prompts exactly at a
 threshold keeping the lower rate. Claude fast mode uses its published premium rates, including
-scaled cache prices. These are fetched by the sync a dashboard starts (and its **↻ refresh**
-button runs), during `install` and `sync`, and by the background worker
-with a 12-hour ttl, shortened to one hour for a new guessed model. Models still unpriced after a
+scaled cache prices. These are fetched during `install` and `sync` and by the background worker
+with a 12-hour ttl, shortened to one hour for a new guessed model, and by the sync a dashboard
+starts (or its **↻ refresh** button runs) when over an hour old — an unchanged list answers
+"not modified" or is a few KB. Models still unpriced after a
 successful check stay on the 12-hour schedule. Failed requests back off for
 one hour. Codex prices long-context requests at the published long tier. No prompts or costs are
 sent. The hook itself never goes online; it hands off to the worker and returns.

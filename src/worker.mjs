@@ -11,7 +11,7 @@ import { scanWindow, recordScanResult, claimScan, readScanState } from "./lib/sc
 import { backupCandidateStores, candidateStores, cleanUpCopies } from "./lib/copies.mjs";
 import { correctEstimatedCosts, correctAll, ratesChangedSinceCorrection } from "./lib/estimates.mjs";
 import { refreshPricing as refreshZaiPricing } from "./lib/vendors/zai/pricing.mjs";
-import { refreshPricing as refreshModelsDevPricing } from "./lib/vendors/modelsdev/remote-pricing.mjs";
+import { refreshPricing as refreshModelsDevPricing, DOWNLOAD_TIMEOUT_MS as MODELS_DEV_TIMEOUT_MS } from "./lib/vendors/modelsdev/remote-pricing.mjs";
 import { providerForId } from "./lib/vendors/modelsdev/pricing.mjs";
 import { UNPRICED_FILE, readUnpriced, writeUnpriced } from "./lib/unpriced.mjs";
 
@@ -427,7 +427,8 @@ export async function refreshRatesAndCorrect({
   providers = detectInstalled(),
   refreshers = {},
   refreshZai = refreshZaiPricing,
-  refreshModelsDev = refreshModelsDevPricing,
+  // Its 5 MB body needs longer than the small price pages.
+  refreshModelsDev = (o) => refreshModelsDevPricing({ ...o, timeoutMs: Math.max(o.timeoutMs || 0, MODELS_DEV_TIMEOUT_MS) }),
   unpricedFile = UNPRICED_FILE,
   now = Date.now(),
   correct = correctEstimatedCosts,

@@ -193,7 +193,8 @@ export async function refreshPricing({
         ...(r.tiers ? { tiers: r.tiers } : {}),
       }]));
     } else {
-      const extra = await fetchImpl(modelsUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) });
+      // The whole ~5 MB body must arrive in time; the official page is a few KB.
+      const extra = await fetchImpl(modelsUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(Math.max(timeoutMs, 30_000)) });
       if (extra.ok) fresh = parseModelsDev(await extra.json());
     }
   } catch {}

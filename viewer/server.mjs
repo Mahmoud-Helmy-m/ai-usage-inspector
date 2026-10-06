@@ -528,6 +528,7 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
 let syncChild = null;
 let syncStartedAt = 0;
 const SYNC_MIN_GAP_MS = Number(process.env.AI_USAGE_SYNC_MIN_GAP_MS || 30_000);
+const DASHBOARD_RATES_TTL_MS = 60 * 60 * 1000;
 
 /** Start the background sync. Returns whether one was started. */
 function autoSync() {
@@ -538,6 +539,9 @@ function autoSync() {
     // --no-pricing-refresh means no fetch from anything this dashboard starts, and
     // sync refreshes rates itself.
     if (ARGS.noPricingRefresh) env.AI_USAGE_NO_PRICING_REFRESH = "1";
+    // Someone opening the dashboard, or pressing refresh, wants today's rates: check any list
+    // older than an hour rather than twelve. An unchanged list answers 304 or is a few KB.
+    env.AI_USAGE_RATES_TTL_MS = String(DASHBOARD_RATES_TTL_MS);
     // The store this dashboard shows. Sync finds stores through transcripts, and a
     // project whose transcripts Claude Code has all deleted is reachable no other
     // way; named here, its stored rows are re-measured like any other.
@@ -580,9 +584,10 @@ function requestSync(req) {
 
 // Refresh the shared pricing caches — Claude rates from Anthropic's public
 // docs, OpenAI Standard rates from its docs (models.dev fills missing ids) —
-// when this dashboard runs without a sync. Each cache keeps its twelve-hour ttl
-// and failure backoff, like the worker's, so a start right after another fetch
-// downloads nothing; the result is content-diffed, so a cache and its log line
+// when this dashboard runs without a sync. Like the sync it would start, it
+// checks a list older than an hour (the worker waits twelve), keeps the failure
+// backoff, and an unchanged list answers 304 or is a few KB; the result is
+// content-diffed, so a cache and its log line
 // only move when a rate actually changed. Skipped when this project isn't
 // tracking cost. Non-blocking, best-effort, offline-safe.
 async function refreshPricing() {
@@ -590,7 +595,7 @@ async function refreshPricing() {
   if (!loadConfig().fields.cost) return;
   for (const { label, mod } of PRICING) {
     await mod
-      .refreshPricing()
+      .refreshPricing({ ttlMs: DASHBOARD_RATES_TTL_MS })
       .then((r) => {
         if (r.status === "updated") {
           const changes = r.changes || [];
