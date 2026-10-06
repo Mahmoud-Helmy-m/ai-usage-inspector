@@ -36,7 +36,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 38: Codex service tiers and models.dev context tiers.
 // 39: the refresh button syncs (new turns, due rates, estimates); start-up stops refetching every rate.
 // 40: dashboard syncs check rates over an hour old.
-export const VIEWER_VERSION = "40";
+// 41: the models.dev sidecar allows 30 seconds for its ~5 MB body.
+export const VIEWER_VERSION = "41";
 
 // A project gets viewer/ and nothing else — no src/ tree beside it — so the
 // modules the bundled dashboard imports are copied in next to it, under the
