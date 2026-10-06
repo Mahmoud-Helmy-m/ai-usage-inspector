@@ -548,11 +548,24 @@ cached ETag, and the other pages are a few KB. The dashboard itself refreshes on
 without that sync (`--no-sync`, or no installed app), on the same hour and backoff. Before
 2.11.2 it refetched every list (about 5 MB with models.dev) on every start, whatever its age. Its **↻ refresh** button asks the server
 (`POST /api/sync`) for the same sync, then reloads: the server runs one at a time, not again
-within 30 seconds (`AI_USAGE_SYNC_MIN_GAP_MS`), and only for this dashboard's own page — the
-request must carry `x-ai-usage-dashboard: 1`, which makes another site's request a preflighted
-one the server never approves, and a localhost Host header. Refreshes **content-diff** the
+within 30 seconds (`AI_USAGE_SYNC_MIN_GAP_MS`), and only for this dashboard's own page (see
+below). Refreshes **content-diff** the
 result: a cache and its log line only move when a rate actually changed, with the models that
 moved. Offline, or when cost is not tracked, the built-in tables are used and no fetch happens.
+
+**Other web pages cannot use the dashboard server.** Two checks in `viewer/server.mjs`:
+- Every request must name this machine in its `Host` header — `localhost`, `*.localhost` or an
+  IP address — or it gets 403. A page on another site that points its own hostname at this
+  machine (DNS rebinding) would otherwise be same-origin with the dashboard and could read
+  every stored prompt; that attack always needs a hostname, so IP addresses (reaching a
+  dashboard bound with `AI_USAGE_HOST` from another device) still work.
+- Every request that changes or exports data — `POST /api/config`, `DELETE /api/events`,
+  `POST /api/export`, `POST /api/sync` — must carry `x-ai-usage-dashboard: 1`. Another site
+  can send a "simple" cross-site POST without the browser asking first (before 2.11.2 such a
+  text/plain POST could switch a project's tracking off); with a custom header the browser must
+  ask the server first, and this server never agrees. The page sends it on every such request
+  (`API_HEADERS` in `app.js`). Reads stay as they were: without CORS headers another site
+  cannot read the responses.
 
 Costs are computed and stored **when each prompt is recorded**, so refreshed rates apply to
 turns recorded after the cache last updated. The hook path reads the cache locally and

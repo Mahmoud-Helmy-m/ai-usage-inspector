@@ -38,6 +38,9 @@ const RECORDS = [
   },
 ];
 
+// What the dashboard page sends on every request that changes or exports data.
+const DASHBOARD = { "x-ai-usage-dashboard": "1" };
+
 function request(port, pathname, { method = "GET", body, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? null : JSON.stringify(body);
@@ -332,7 +335,7 @@ test("/api/search: empty query disables filtering, no match returns none", async
 
 test("/api/export returns whole records for the requested keys", async () => {
   const res = await request(port, "/api/export", {
-    method: "POST",
+    method: "POST", headers: DASHBOARD,
     body: { keys: [{ provider: "claude", sessionId: "s1", id: "s1:0" }] },
   });
   assert.equal(res.status, 200);
@@ -342,7 +345,7 @@ test("/api/export returns whole records for the requested keys", async () => {
 });
 
 test("/api/export with no keys returns nothing rather than everything", async () => {
-  const res = await request(port, "/api/export", { method: "POST", body: { keys: [] } });
+  const res = await request(port, "/api/export", { method: "POST", headers: DASHBOARD, body: { keys: [] } });
   assert.deepEqual(res.json, []);
 });
 
@@ -381,7 +384,7 @@ test("/api/stream is an SSE feed that fires when the data dir changes", async ()
 
 test("DELETE tombstones the record so it stays gone", async () => {
   const del = await request(port, "/api/events", {
-    method: "DELETE",
+    method: "DELETE", headers: DASHBOARD,
     body: { keys: [{ provider: "codex", sessionId: "s2", id: "s2:0" }] },
   });
   assert.equal(del.status, 200);
@@ -1385,4 +1388,41 @@ test("the dashboard syncs at start and on refresh, one at a time", async (t) => 
   assert.deepEqual(await press(), { started: true, reason: null });
   for (let i = 0; i < 50 && runs().length < 2; i++) await wait(100);
   assert.equal(runs().length, 2);
+});
+
+// Another web page must not read or change this dashboard. A rebound hostname is refused on
+// every route; IP addresses and localhost names (what a browser sends here) are not.
+test("requests naming another host are refused on every route; localhost names and IPs are not", async () => {
+  for (const route of ["/", "/api/events", "/api/config", "/api/event/s1%3A0", "/api/search?q=x"]) {
+    const res = await request(port, route, { headers: { Host: `attacker.example:${port}` } });
+    assert.equal(res.status, 403, `${route} with a foreign Host`);
+  }
+  for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, `app.localhost:${port}`, `[::1]:${port}`, `192.168.1.20:${port}`]) {
+    assert.equal((await request(port, "/api/config", { headers: { Host: host } })).status, 200, host);
+  }
+});
+
+// A cross-site page may send a "simple" POST without asking first; the header makes that
+// impossible, because adding it turns the request into one the browser must ask about.
+test("changing or exporting without the dashboard header is refused and changes nothing", async () => {
+  const before = (await request(port, "/api/config")).json;
+  const plain = { "Content-Type": "text/plain" };
+  const config = await request(port, "/api/config", { method: "POST", headers: plain, body: { tracking: { enabled: false } } });
+  assert.equal(config.status, 403);
+  assert.deepEqual((await request(port, "/api/config")).json, before, "the config is unchanged");
+  const del = await request(port, "/api/events", { method: "DELETE", body: { keys: [{ provider: "claude", sessionId: "s1", id: "s1:0" }] } });
+  assert.equal(del.status, 403);
+  assert.ok((await request(port, "/api/events")).json.some((e) => e.id === "s1:0"), "nothing was deleted");
+  assert.equal((await request(port, "/api/export", { method: "POST", body: { keys: [{ provider: "claude", sessionId: "s1", id: "s1:0" }] } })).status, 403);
+  assert.equal((await request(port, "/api/export", { method: "POST", headers: { "x-ai-usage-dashboard": "0" }, body: { keys: [] } })).status, 403);
+  // Reading stays open to the page as before.
+  assert.equal((await request(port, "/api/events")).status, 200);
+});
+
+test("the dashboard page sends the header on every request that changes or exports data", () => {
+  const app = fs.readFileSync(path.join(path.dirname(SERVER), "public", "app.js"), "utf8");
+  assert.match(app, /const API_HEADERS = \{ "Content-Type": "application\/json", "x-ai-usage-dashboard": "1" \};/);
+  const changing = [...app.matchAll(/fetch\("\/api\/(\w+)"[^)]*?method: "(POST|DELETE)"[^]*?\}\)/g)];
+  assert.ok(changing.length >= 5, `found ${changing.length} changing requests`);
+  for (const [call] of changing) assert.match(call, /headers: API_HEADERS/, call.slice(0, 80));
 });

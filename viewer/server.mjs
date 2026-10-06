@@ -335,6 +335,12 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const route = url.pathname;
   try {
+    if (!localHost(req)) return send(res, 403, "forbidden", "text/plain");
+    // Changes and full-text exports come only from this dashboard's own page (see localHost).
+    const changing = (route === "/api/config" && req.method === "POST")
+      || (route === "/api/events" && req.method === "DELETE")
+      || route === "/api/export";
+    if (changing && !fromDashboard(req)) return send(res, 403, JSON.stringify({ error: "forbidden" }));
     if (route === "/api/status") {
       // A verified reuse happens just before the browser opens. Resetting only
       // for a launcher that knows our nonce closes the verify-to-open idle race.
@@ -566,14 +572,23 @@ function autoSync() {
   }
 }
 
-/**
- * The refresh button's sync. Only this dashboard's own page may start one: the custom header
- * makes any other site's request a preflighted one, which this server never approves, and the
- * Host check refuses a page that rebinds a hostname to this port.
- */
+// Two guards keep other web pages out. A page on another site that rebinds its own hostname to
+// this machine (DNS rebinding) reads and writes as if it were this dashboard, so every request
+// must name this machine in its Host header: localhost, *.localhost or an IP address — a
+// rebinding attack always needs a hostname. And a page that just posts here cross-site needs no
+// permission for a "simple" request, so every request that changes or exports data must carry
+// x-ai-usage-dashboard: 1, which turns another site's request into a preflighted one this
+// server never approves.
+function localHost(req) {
+  const host = String(req.headers.host || "").toLowerCase().replace(/:\d+$/, "");
+  return host === "localhost" || host.endsWith(".localhost")
+    || /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || /^\[[0-9a-f:.]+\]$/.test(host);
+}
+const fromDashboard = (req) => req.headers["x-ai-usage-dashboard"] === "1";
+
+/** The refresh button's sync: one at a time, and only for this dashboard's own page. */
 function requestSync(req) {
-  const host = String(req.headers.host || "").replace(/:\d+$/, "").toLowerCase();
-  if (req.headers["x-ai-usage-dashboard"] !== "1" || !["localhost", "127.0.0.1", "[::1]"].includes(host)) {
+  if (!fromDashboard(req) || !localHost(req)) {
     return { status: 403, body: { started: false, reason: "forbidden" } };
   }
   if (ARGS.noSync) return { status: 200, body: { started: false, reason: "disabled" } };

@@ -2,6 +2,10 @@
 
 const $ = (s, r = document) => r.querySelector(s);
 
+// Every request that changes or exports data carries this header: the server refuses such a
+// request without it, so another web page cannot make one without the browser asking first.
+const API_HEADERS = { "Content-Type": "application/json", "x-ai-usage-dashboard": "1" };
+
 // theme tokens read live from CSS vars so charts repaint correctly on light/dark
 let chartColors = null;
 const cssv = (n) => chartColors ? (chartColors[n] ??= chartColors.style.getPropertyValue(n).trim()) : getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -77,7 +81,7 @@ async function delEvents(keys, label) {
   try {
     r = await (await fetch("/api/events", {
       method: "DELETE",
-      headers: { "Content-Type": "application/json" },
+      headers: API_HEADERS,
       body: JSON.stringify({ keys }),
     })).json();
   } catch {}
@@ -108,7 +112,7 @@ async function exportRecords(kind) {
     try {
       full = await (await fetch("/api/export", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: API_HEADERS,
         body: JSON.stringify({ keys: rows.map(eventKey) }),
       })).json();
     } catch {}
@@ -179,7 +183,7 @@ async function loadConfig() {
 async function saveConfigPatch(patch) {
   try {
     const cfg = await (await fetch("/api/config", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
+      method: "POST", headers: API_HEADERS, body: JSON.stringify(patch),
     })).json();
     state.fields = cfg.fields || {};
     state.enabled = !cfg.tracking || cfg.tracking.enabled !== false;
@@ -222,7 +226,7 @@ function persist() {
     state.expanded = [...new Set(state.expanded)].filter((key) => live.has(key)).slice(-500);
     fetch("/api/config", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: API_HEADERS,
       body: JSON.stringify({ ui: { filters: state.filters, sort: state.sort, group: state.group, expanded: state.expanded, chartView: validateChartView(state.chartView) } }),
     }).catch(() => {});
   }, 400);
@@ -1728,7 +1732,7 @@ function bind() {
       const n = parseFloat(t.value);
       const budgetMonthly = Number.isFinite(n) && n > 0 ? n : null;
       state.budgetMonthly = budgetMonthly;
-      fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ui: { budgetMonthly } }) }).catch(() => {});
+      fetch("/api/config", { method: "POST", headers: API_HEADERS, body: JSON.stringify({ ui: { budgetMonthly } }) }).catch(() => {});
       renderStats();
       toast("budget saved");
     }
@@ -1807,7 +1811,7 @@ function showSyncing(on) {
 }
 async function refreshNow() {
   try {
-    const res = await fetch("/api/sync", { method: "POST", headers: { "x-ai-usage-dashboard": "1" } });
+    const res = await fetch("/api/sync", { method: "POST", headers: API_HEADERS });
     const body = res.ok ? await res.json() : null;
     if (body && (body.started || body.reason === "running")) showSyncing(true);
   } catch {}
